@@ -71,11 +71,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "summary") {
     debugLog("收到重點整理", message);
-    showSummary(message.text);
-    if (message.send_to_chat) {
+    if (message.send_to_chat === true) {
+      // This connection is the room's chat sender: chat is the primary
+      // channel. Only fall back to the floating card if the post fails.
       sendMeetChatMessage(`🤖 會議重點整理：\n${message.text}`).catch((error) => {
+        debugLog("聊天室發送失敗，改用浮動卡片顯示", error);
+        showSummary(message.text);
         showNotice(`聊天室自動發送失敗：${error.message}。請確認聊天室已允許傳送訊息。`);
       });
+    } else if (message.send_to_chat === false) {
+      // Not the chat sender for a successful summary — it'll show up in Meet
+      // chat once that connection's post lands; nothing to do here.
+    } else {
+      // No chat attempt at all (nothing to summarize yet, or the summarizer
+      // failed). Only the requester gets this message, so show it directly.
+      showSummary(message.text);
     }
   }
   if (message.type === "detect-name") {
