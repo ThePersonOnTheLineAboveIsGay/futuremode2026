@@ -80,6 +80,25 @@ def test_room_buffers_do_not_cross_contaminate() -> None:
     asyncio.run(scenario())
 
 
+def test_snapshot_history_keeps_whole_meeting_past_rolling_window() -> None:
+    async def scenario() -> None:
+        manager = RoomManager(window_minutes=15, max_utterances=2, idle_timeout_seconds=60)
+        socket = FakeWebSocket()
+        await manager.join("aaa-bbbb-ccc", socket, display_name=None)
+        now = datetime.now(timezone.utc)
+
+        await manager.add_utterance("aaa-bbbb-ccc", "第一句", None, now, "stt", 0)
+        await manager.add_utterance("aaa-bbbb-ccc", "第二句", None, now, "stt", 0)
+        await manager.add_utterance("aaa-bbbb-ccc", "第三句", None, now, "stt", 0)
+
+        # The rolling analysis buffer is capped at max_utterances=2...
+        assert [item.text for item in manager.rooms["aaa-bbbb-ccc"].buffer.items] == ["第二句", "第三句"]
+        # ...but the summarize snapshot still has everything said so far.
+        assert [item.text for item in manager.snapshot_history("aaa-bbbb-ccc")] == ["第一句", "第二句", "第三句"]
+
+    asyncio.run(scenario())
+
+
 def test_join_tracks_participant_display_names() -> None:
     async def scenario() -> None:
         manager = RoomManager(15, 100, idle_timeout_seconds=60)

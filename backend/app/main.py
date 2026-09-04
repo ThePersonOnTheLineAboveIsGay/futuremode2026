@@ -274,14 +274,17 @@ async def handle_summarize(
     summarizer: Summarizer,
     meeting_id: str,
 ) -> None:
+    """Summarize the whole meeting so far (not the rolling analysis window) and
+    broadcast the result to the room, posting it to Meet chat like an
+    interjection. Empty/failed attempts only reply to the requester — nothing
+    useful to share with the room in that case."""
     history = rooms.snapshot_history(meeting_id)
     logger.info("[%s] Summarize requested | utterances=%d", meeting_id, len(history))
-    debug_header = f"【Debug 整理結果】\n逐字稿筆數：{len(history)}"
     if not history:
         await websocket.send_json({
             "type": "summary",
             "meeting_id": meeting_id,
-            "text": f"{debug_header}\n資料狀態：尚未收到可整理的逐字稿。",
+            "text": "目前還沒有逐字稿可以整理重點，先說幾句話再試一次。",
         })
         return
     try:
@@ -291,15 +294,16 @@ async def handle_summarize(
         await websocket.send_json({
             "type": "summary",
             "meeting_id": meeting_id,
-            "text": f"{debug_header}\n資料狀態：摘要服務呼叫失敗。\n錯誤：{exc}",
+            "text": f"整理重點失敗（目前逐字稿共 {len(history)} 句）：{exc}",
         })
         return
-    summary = text or "（摘要服務沒有回傳文字）"
-    await websocket.send_json({
-        "type": "summary",
-        "meeting_id": meeting_id,
-        "text": f"{debug_header}\n資料狀態：已收到逐字稿。\n\n摘要：\n{summary}",
-    })
+    summary = text.strip() or "（摘要服務沒有回傳文字）"
+    logger.info("[%s] Summary broadcast | utterances=%d", meeting_id, len(history))
+    await rooms.broadcast(
+        meeting_id,
+        {"type": "summary", "meeting_id": meeting_id, "text": summary},
+        allow_chat=True,
+    )
 
 
 def clean_speaker(value: object) -> str | None:

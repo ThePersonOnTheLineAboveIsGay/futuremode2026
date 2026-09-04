@@ -89,7 +89,7 @@ wss://meet.wuzuantw.com/ws/meeting?meeting_id=xxx-yyyy-zzz
 
 ### Debug：整理重點
 
-Extension popup 有一個「整理重點（Debug）」按鈕，會請後端把目前房間的逐字稿整理成 3–8 條繁體中文重點摘要回傳，同時顯示在 popup 與 Meet 頁面的浮動卡片上。用來確認「AI 到底聽到了什麼」，不影響插話判斷邏輯。
+Extension popup 有一個「整理重點（Debug）」按鈕，會請後端把**從會議開始到現在**的完整逐字稿（不是插話判斷用的那個 15 分鐘滾動視窗）整理成一份按時間先後排列的重點摘要。結果會廣播給同房所有 Extension（跳浮動卡片），並比照插話事件由其中一個連線自動貼進 Meet 聊天室，讓沒裝套件的人也看得到會議重點。整理失敗或還沒有逐字稿時，只有按按鈕的那個人會看到訊息，不會發到聊天室。用來確認「AI 到底聽到了什麼」，不影響插話判斷邏輯。
 
 ## WebSocket 訊息
 
@@ -131,11 +131,18 @@ Extension popup 有一個「整理重點（Debug）」按鈕，會請後端把�
 { "type": "summarize" }
 ```
 
-回傳：
+成功時廣播給同房所有連線（`send_to_chat` 只有聊天室發送端那條連線是 `true`）：
 
 ```json
-{ "type": "summary", "meeting_id": "xxx-yyyy-zzz", "text": "- 重點一\n- 重點二" }
+{
+  "type": "summary",
+  "meeting_id": "xxx-yyyy-zzz",
+  "text": "[10:02] 決定採用方案 A，因為成本較低\n[10:15] 改為方案 B，原因待確認",
+  "send_to_chat": true
+}
 ```
+
+還沒有逐字稿、或整理失敗時，只會回給發出請求的那條連線，不會廣播、也不會發聊天室。
 
 ## 本機開發與測試
 

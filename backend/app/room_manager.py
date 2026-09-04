@@ -25,6 +25,9 @@ class RoomState:
     last_analysis_at: float = field(default_factory=lambda: float("-inf"))
     last_chat_by_speaker: dict[str, float] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Unpruned, whole-meeting log for the summarize feature. `buffer` above is a
+    # rolling window scoped to contradiction analysis and must stay that way.
+    full_history: list[Utterance] = field(default_factory=list)
 
 
 class RoomManager:
@@ -105,10 +108,11 @@ class RoomManager:
         return room.participants.get(websocket)
 
     def snapshot_history(self, meeting_id: str) -> list[Utterance]:
+        """Whole-meeting transcript, for summarize — not the rolling analysis window."""
         room = self.rooms.get(meeting_id)
         if room is None:
             return []
-        return list(room.buffer.items)
+        return list(room.full_history)
 
     async def add_utterance(
         self,
@@ -127,6 +131,7 @@ class RoomManager:
             latest = room.buffer.add(text=text, speaker=speaker, timestamp=timestamp, source=source)
             if latest is None:
                 return None, [], False
+            room.full_history.append(latest)
             history = room.buffer.history_before(latest)
             now = monotonic()
             should_analyze = bool(history) and now - room.last_analysis_at >= analysis_interval_seconds

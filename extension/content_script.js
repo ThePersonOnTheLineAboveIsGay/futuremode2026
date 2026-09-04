@@ -72,6 +72,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "summary") {
     debugLog("收到重點整理", message);
     showSummary(message.text);
+    if (message.send_to_chat) {
+      sendMeetChatMessage(`🤖 會議重點整理：\n${message.text}`).catch((error) => {
+        showNotice(`聊天室自動發送失敗：${error.message}。請確認聊天室已允許傳送訊息。`);
+      });
+    }
   }
   if (message.type === "detect-name") {
     const name = detectSelfName();
