@@ -63,7 +63,7 @@ OPENAI_API_KEY=
 GEMINI_API_KEY=你的金鑰
 ```
 
-模型建議值已設定完成，一般不要修改 `WHISPER_MODEL`、`LLM_MODEL` 或 `GEMINI_MODEL`。不要將 `.env` 或 API key commit 到 Git。
+模型建議值已由後端管理，一般不要在 `.env` 加入模型欄位。不要將 `.env` 或 API key commit 到 Git。
 
 ## 4A. 使用 Docker 啟動
 

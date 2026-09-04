@@ -1,8 +1,8 @@
+import base64
 from io import BytesIO
 
 from openai import AsyncOpenAI
 from google import genai
-from google.genai import types
 
 
 class SpeechToText:
@@ -31,12 +31,19 @@ class GeminiSpeechToText:
         if not audio:
             return ""
         clean_mime_type = mime_type.split(";", 1)[0]
-        response = await self.client.aio.models.generate_content(
+        interaction = await self.client.aio.interactions.create(
             model=self.model,
-            contents=[
-                "請逐字轉寫這段會議音訊。只輸出逐字稿，不要摘要、解釋或加上標點以外的註記。",
-                types.Part.from_bytes(data=audio, mime_type=clean_mime_type),
+            input=[
+                {
+                    "type": "text",
+                    "text": "請逐字轉寫這段會議音訊。只輸出逐字稿，不要摘要、解釋或加上標點以外的註記。",
+                },
+                {
+                    "type": "audio",
+                    "data": base64.b64encode(audio).decode("ascii"),
+                    "mime_type": clean_mime_type,
+                },
             ],
-            config=types.GenerateContentConfig(temperature=0),
+            store=False,
         )
-        return (response.text or "").strip()
+        return (interaction.output_text or "").strip()

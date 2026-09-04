@@ -4,7 +4,6 @@ from typing import Literal
 
 from openai import AsyncOpenAI
 from google import genai
-from google.genai import types
 from pydantic import BaseModel, Field
 
 from .conversation_buffer import Utterance
@@ -64,19 +63,20 @@ class GeminiContradictionDetector:
         self.model = model
 
     async def analyze(self, history: list[Utterance], latest: Utterance) -> InterjectionAnalysis:
-        response = await self.client.aio.models.generate_content(
+        interaction = await self.client.aio.interactions.create(
             model=self.model,
-            contents=build_analysis_prompt(history, latest),
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.1,
-                response_mime_type="application/json",
-                response_json_schema=InterjectionAnalysis.model_json_schema(),
-            ),
+            input=build_analysis_prompt(history, latest),
+            system_instruction=SYSTEM_PROMPT,
+            response_format={
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": InterjectionAnalysis.model_json_schema(),
+            },
+            store=False,
         )
-        if not response.text:
+        if not interaction.output_text:
             raise ValueError("Gemini 沒有回傳判斷結果")
-        result = InterjectionAnalysis.model_validate_json(response.text)
+        result = InterjectionAnalysis.model_validate_json(interaction.output_text)
         return normalize_analysis(result, latest)
 
 

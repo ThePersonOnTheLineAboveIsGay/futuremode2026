@@ -50,13 +50,7 @@ OPENAI_API_KEY=
 GEMINI_API_KEY=你的金鑰
 ```
 
-建議不要修改模型設定。專案已針對以下預設值設計與測試：
-
-```ini
-WHISPER_MODEL=gpt-4o-transcribe
-LLM_MODEL=gpt-4o
-GEMINI_MODEL=gemini-2.5-flash
-```
+模型由後端的建議預設值管理，一般使用者不必在 `.env` 設定模型，也不建議自行加入模型欄位。目前 Gemini 使用 `gemini-3.6-flash`；舊 `.env` 若仍是已退役的 `gemini-2.5-flash`，後端會自動升級。
 
 切換 provider 或 key 後必須重新啟動後端。字幕擷取、room、廣播及 Meet UI 不需要修改。
 

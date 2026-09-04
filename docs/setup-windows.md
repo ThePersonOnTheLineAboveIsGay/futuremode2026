@@ -66,7 +66,7 @@ OPENAI_API_KEY=
 GEMINI_API_KEY=你的金鑰
 ```
 
-請保留 `WHISPER_MODEL=gpt-4o-transcribe`、`LLM_MODEL=gpt-4o` 與 `GEMINI_MODEL=gemini-2.5-flash`，一般使用不需要修改模型。
+模型由後端管理，一般不要在 `.env` 加入 `WHISPER_MODEL`、`LLM_MODEL` 或 `GEMINI_MODEL`。若舊 `.env` 仍有 `GEMINI_MODEL=gemini-2.5-flash`，更新後的後端會自動改用 `gemini-3.6-flash`。
 
 `.env` 已被 Git 忽略，不要把金鑰貼進 `extension`、README 或 commit。
 

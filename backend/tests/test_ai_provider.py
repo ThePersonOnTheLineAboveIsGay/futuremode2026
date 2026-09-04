@@ -9,14 +9,14 @@ from app.conversation_buffer import Utterance
 from app.stt import GeminiSpeechToText
 
 
-class FakeGeminiModels:
+class FakeGeminiInteractions:
     def __init__(self, text: str) -> None:
         self.text = text
         self.calls: list[dict] = []
 
-    async def generate_content(self, **kwargs):
+    async def create(self, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(text=self.text)
+        return SimpleNamespace(output_text=self.text)
 
 
 def test_provider_requires_the_selected_key() -> None:
@@ -24,28 +24,34 @@ def test_provider_requires_the_selected_key() -> None:
     assert create_ai_services(Settings(AI_PROVIDER="gemini", GEMINI_API_KEY="")) is None
 
 
+def test_retired_gemini_model_is_migrated() -> None:
+    settings = Settings(AI_PROVIDER="gemini", GEMINI_API_KEY="test", GEMINI_MODEL="gemini-2.5-flash")
+    assert settings.gemini_model == "gemini-3.6-flash"
+
+
 def test_gemini_transcribes_inline_audio() -> None:
     async def scenario() -> None:
-        models = FakeGeminiModels("會議逐字稿")
-        client = SimpleNamespace(aio=SimpleNamespace(models=models))
-        transcriber = GeminiSpeechToText(client, "gemini-2.5-flash")
+        interactions = FakeGeminiInteractions("會議逐字稿")
+        client = SimpleNamespace(aio=SimpleNamespace(interactions=interactions))
+        transcriber = GeminiSpeechToText(client, "gemini-3.6-flash")
 
         result = await transcriber.transcribe(b"webm audio", "audio/webm;codecs=opus")
 
         assert result == "會議逐字稿"
-        assert models.calls[0]["model"] == "gemini-2.5-flash"
+        assert interactions.calls[0]["model"] == "gemini-3.6-flash"
+        assert interactions.calls[0]["store"] is False
 
     asyncio.run(scenario())
 
 
 def test_gemini_returns_structured_interjection() -> None:
     async def scenario() -> None:
-        models = FakeGeminiModels(
+        interactions = FakeGeminiInteractions(
             '{"has_issue":true,"issue_type":"contradiction","explanation":"A 改成 B",'
             '"suggested_interjection":"請說明改變原因","confidence":0.9,"target_speaker":null}'
         )
-        client = SimpleNamespace(aio=SimpleNamespace(models=models))
-        detector = GeminiContradictionDetector(client, "gemini-2.5-flash")
+        client = SimpleNamespace(aio=SimpleNamespace(interactions=interactions))
+        detector = GeminiContradictionDetector(client, "gemini-3.6-flash")
         now = datetime.now(timezone.utc)
 
         result = await detector.analyze(
@@ -55,8 +61,9 @@ def test_gemini_returns_structured_interjection() -> None:
 
         assert result.has_issue
         assert result.target_speaker == "王小明"
-        config = models.calls[0]["config"]
-        assert config.response_mime_type == "application/json"
-        assert config.response_json_schema is not None
+        response_format = interactions.calls[0]["response_format"]
+        assert response_format["mime_type"] == "application/json"
+        assert response_format["schema"] is not None
+        assert interactions.calls[0]["store"] is False
 
     asyncio.run(scenario())
