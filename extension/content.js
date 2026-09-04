@@ -1,6 +1,6 @@
 // 在 Google Meet 頁面顯示狀態、分析結果與除錯記錄。開始/停止在工具列圖示。
 (() => {
-  const VERSION = "0.6.0";
+  const VERSION = "0.9.0";
   const host = document.createElement("div");
   host.id = "mfa-root";
   document.documentElement.appendChild(host);
@@ -91,15 +91,39 @@
     );
   }
 
+  // 啟動逾時保護：點了圖示卻卡在「starting」太久（常見是 offscreen 文件
+  // 剛建立時的 MV3 訊息競速：createDocument() resolve 了不代表它的
+  // onMessage listener 已經掛上，OFFSCREEN_START 可能沒送到），
+  // 讓使用者知道要重新點一次，而不是死等。
+  const STARTUP_TIMEOUT_MS = 8000;
+  let startupTimer = null;
+  function clearStartupTimer() {
+    if (startupTimer) { clearTimeout(startupTimer); startupTimer = null; }
+  }
+  function armStartupTimer() {
+    clearStartupTimer();
+    startupTimer = setTimeout(() => {
+      log("✗ 啟動逾時（" + (STARTUP_TIMEOUT_MS / 1000) + " 秒內沒連上後端），可能是 offscreen 初始化卡住");
+      showMsg("啟動逾時，請再點一次 Chrome 工具列圖示重新嘗試。", true);
+      setStatus("idle");
+      chrome.runtime.sendMessage({ type: "STOP" }).catch(() => {});
+    }, STARTUP_TIMEOUT_MS);
+  }
+
   chrome.runtime.onMessage.addListener((m) => {
-    if (m.type === "STATUS") { log("狀態：" + m.state); setStatus(m.state); }
-    else if (m.type === "SESSION") { log("後端連上，session " + m.sessionId); setStatus("ready"); showMsg("監聽中…"); }
+    if (m.type === "STATUS") {
+      log("狀態：" + m.state);
+      setStatus(m.state);
+      if (m.state === "starting") armStartupTimer();
+      else clearStartupTimer();
+    }
+    else if (m.type === "SESSION") { clearStartupTimer(); log("後端連上，session " + m.sessionId); setStatus("ready"); showMsg("監聽中…"); }
     else if (m.type === "ASSESSMENT") { log("收到評估 " + (m.items || []).length + " 筆"); (m.items || []).forEach(addAssessment); }
     else if (m.type === "TRANSCRIPT") log("逐字稿：" + m.text);
     else if (m.type === "NOTICE") { log("ℹ " + m.text); showMsg(m.text); }
     else if (m.type === "WS_OPEN") log("WebSocket 已連線");
-    else if (m.type === "WS_CLOSED") { log("WebSocket 已關閉"); setStatus("stopped"); }
-    else if (m.type === "WS_ERROR") { log("✗ 錯誤：" + m.message); showMsg("錯誤：" + m.message, true); }
+    else if (m.type === "WS_CLOSED") { clearStartupTimer(); log("WebSocket 已關閉"); setStatus("stopped"); }
+    else if (m.type === "WS_ERROR") { clearStartupTimer(); log("✗ 錯誤：" + m.message); showMsg("錯誤：" + m.message, true); }
     else if (m.type === "SW_LOG") log("SW: " + m.message);
   });
 

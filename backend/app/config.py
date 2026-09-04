@@ -11,11 +11,13 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
 
-    # 轉錄與分析共用同一個 Gemini 模型
+    # 分析用 Gemini 模型
     gemini_model: str = "gemini-3.6-flash"
 
-    # 轉錄語言提示（自然語言，給模型看）；留空則不提示
-    transcribe_language_hint: str = "繁體中文"
+    # 轉錄改用 OpenRouter（Whisper）
+    openrouter_api_key: str = ""
+    openrouter_model: str = "openai/whisper-large-v3"
+
     # 分析輸出語言
     analysis_language: str = "zh-TW"
 

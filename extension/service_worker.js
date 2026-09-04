@@ -1,8 +1,8 @@
 // 協調者：點工具列圖示切換監聽；管理 offscreen 音訊擷取。
 // 注意：service worker 閒置會被 Chrome 回收、之後又重新啟動——記憶體變數會歸零。
 // 所以「是否監聽中 / 目標分頁 / session id」都存進 chrome.storage.session，不能只放在變數裡。
-// 結果轉發（逐字稿/評估/狀態）改由 offscreen 直接 chrome.tabs.sendMessage 給分頁，
-// 不經過 service worker，這樣就算 service worker 被回收也不會漏轉發。
+// offscreen 文件沒有 chrome.tabs 可用，結果轉發（逐字稿/評估/狀態）一律經過這裡：
+// offscreen 用 toSW() 把訊息送回來，這裡從 storage.session 現讀 tabId 再轉發給分頁。
 importScripts("common.js");
 
 const OFFSCREEN_PATH = "offscreen.html";
@@ -91,6 +91,8 @@ async function startForTab(tab) {
   await setState({ running: true, tabId: tab.id, sessionId: null });
   setBadge(true);
 
+  // streamId 是一次性的（用過一次就失效），只能送一次 OFFSCREEN_START；
+  // 漏接的保險交給 OFFSCREEN_READY → pendingStart 那條補送路徑。
   chrome.runtime
     .sendMessage({ target: "offscreen", type: "OFFSCREEN_START", streamId, settings, tabId: tab.id })
     .catch(() => {});
@@ -129,7 +131,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
-  // 來自 offscreen：只處理需要 service worker 記帳的事（結果轉發已由 offscreen 直送分頁）
+  // 來自 offscreen：offscreen document 沒有 chrome.tabs 可用，
+  // 所有要顯示在分頁面板上的訊息都繞道這裡轉發（tabId 現讀 storage.session，
+  // 不受 service worker 自己被回收重啟影響）。
   if (msg.from === "offscreen") {
     if (msg.type === "OFFSCREEN_READY") {
       if (pendingStart) {
@@ -145,6 +149,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       setState({ running: false });
       setBadge(false);
     }
+    getState().then(({ tabId }) => {
+      if (tabId != null) chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+    });
     return false;
   }
 });

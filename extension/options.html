@@ -9,11 +9,17 @@
       .hint { font-size: 12px; color: #666; margin-top: 3px; }
       .row { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
       button { margin-top: 18px; padding: 9px 18px; border: none; border-radius: 8px; background: #2563eb; color: #fff; font-size: 13px; cursor: pointer; }
-      #saved { margin-left: 10px; color: #16a34a; font-size: 13px; }
+      #saved, #micStatus { margin-left: 10px; color: #16a34a; font-size: 13px; }
+      #micStatus.err { color: #dc2626; }
     </style>
   </head>
   <body>
     <h1>設定</h1>
+
+    <label>麥克風權限</label>
+    <div class="hint">會跟分頁聲音混在一起送去轉錄，第一次要在這裡按過一次才會跳出瀏覽器的授權提示（沒授權也能用，只是收不到你的麥克風）。</div>
+    <button id="grantMic" type="button">允許麥克風</button>
+    <span id="micStatus"></span>
 
     <label>後端 WebSocket 位址</label>
     <input type="text" id="backendUrl" placeholder="ws://localhost:8000/ws/new" />

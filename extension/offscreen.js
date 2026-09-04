@@ -1,17 +1,18 @@
-// 在 offscreen document 執行：擷取分頁音訊、每 25 秒送一段給後端、接收分析結果。
-// 結果直接 chrome.tabs.sendMessage 給目標分頁（不繞道 service worker），
-// 因為 service worker 閒置會被回收重啟、記憶體狀態會不見；offscreen 文件本身則會一直存活到被關掉為止。
+// 在 offscreen document 執行：擷取分頁音訊（喇叭輸出）＋麥克風、混成一軌，
+// 每 25 秒送一段給後端、接收分析結果。
+// 結果透過 toSW() 繞道 service worker 轉發給目標分頁（offscreen 文件沒有 chrome.tabs 可用）。
 const CHUNK_MS = 25000;
 
 let ws = null;
-let stream = null;
+let stream = null; // 混音後、真正拿去錄的 stream
+let tabStream = null; // 分頁音訊原始 stream
+let micStream = null; // 麥克風原始 stream（可能沒有，取決於是否已授權）
 let recorder = null;
 let audioCtx = null;
 let chunkTimer = null;
 let running = false;
 let starting = false;
 let settings = null;
-let targetTabId = null;
 let reconnectDelay = 1000;
 
 function toSW(msg) {
@@ -19,23 +20,79 @@ function toSW(msg) {
 }
 
 function toTab(msg) {
-  if (targetTabId != null) chrome.tabs.sendMessage(targetTabId, msg).catch(() => {});
+  // offscreen document 沒有 chrome.tabs 可用（受限的執行環境），
+  // 一律繞道 service worker 轉發給分頁；service worker 從
+  // chrome.storage.session 現讀 tabId，不受它自己被回收重啟影響。
+  toSW(msg);
+}
+
+function hardResetLocal() {
+  // 清掉上一輪留下的擷取狀態。
+  clearTimeout(chunkTimer);
+  try {
+    recorder && recorder.state !== "inactive" && recorder.stop();
+  } catch {}
+  tabStream && tabStream.getTracks().forEach((t) => t.stop());
+  micStream && micStream.getTracks().forEach((t) => t.stop());
+  try {
+    audioCtx && audioCtx.close();
+  } catch {}
+  if (ws) {
+    try {
+      ws.close();
+    } catch {}
+  }
+  ws = stream = tabStream = micStream = recorder = audioCtx = null;
+  running = false;
+  starting = false;
 }
 
 async function startCapture(streamId) {
-  if (running || starting) return;
+  if (starting) return;
+  if (running) {
+    // offscreen 文件是長駐的：如果上一輪的擷取沒有真的收尾乾淨，
+    // running 會卡在 true，新的 OFFSCREEN_START 進來會被下面這行默默擋掉、
+    // 永遠連不上後端。偵測到舊狀態就先強制清掉，改成重新開始而不是無聲放棄。
+    toTab({ type: "SW_LOG", message: "偵測到上一輪擷取未收尾，強制重置後重新啟動" });
+    hardResetLocal();
+  }
   starting = true;
-  toTab({ type: "SW_LOG", message: "offscreen 取得音訊中…" });
-  stream = await navigator.mediaDevices.getUserMedia({
+  toTab({ type: "SW_LOG", message: "offscreen 取得分頁音訊中…" });
+  tabStream = await navigator.mediaDevices.getUserMedia({
     audio: {
       mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId },
     },
   });
-  toTab({ type: "SW_LOG", message: "已取得分頁音訊，連線後端 " + settings.backendUrl });
+  toTab({ type: "SW_LOG", message: "已取得分頁音訊" });
 
-  // 把擷取到的音訊接回喇叭，否則分頁會被靜音。
+  toTab({ type: "SW_LOG", message: "offscreen 取得麥克風中…" });
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    toTab({ type: "SW_LOG", message: "已取得麥克風" });
+  } catch (e) {
+    micStream = null;
+    toTab({
+      type: "SW_LOG",
+      message:
+        "⚠ 無法取得麥克風（" +
+        String(e && e.message ? e.message : e) +
+        "），只會收到分頁聲音。請先到擴充功能「選項」頁按過一次「允許麥克風」。",
+    });
+  }
+
+  // 用 Web Audio 把分頁音訊＋麥克風混成一軌再拿去錄：
+  // 分頁音訊另外接回喇叭（否則分頁會被靜音），麥克風不接回喇叭（避免回音）。
   audioCtx = new AudioContext();
-  audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination);
+  const dest = audioCtx.createMediaStreamDestination();
+  const tabSource = audioCtx.createMediaStreamSource(tabStream);
+  tabSource.connect(dest);
+  tabSource.connect(audioCtx.destination);
+  if (micStream) {
+    audioCtx.createMediaStreamSource(micStream).connect(dest);
+  }
+  stream = dest.stream;
+
+  toTab({ type: "SW_LOG", message: "混音完成，連線後端 " + settings.backendUrl });
 
   connectWs();
   startRecorderCycle();
@@ -119,7 +176,8 @@ function stopAll() {
   try {
     recorder && recorder.state !== "inactive" && recorder.stop();
   } catch {}
-  stream && stream.getTracks().forEach((t) => t.stop());
+  tabStream && tabStream.getTracks().forEach((t) => t.stop());
+  micStream && micStream.getTracks().forEach((t) => t.stop());
   audioCtx && audioCtx.close();
   if (ws) {
     try {
@@ -127,10 +185,9 @@ function stopAll() {
     } catch {}
     ws.close();
   }
-  ws = stream = recorder = audioCtx = null;
+  ws = stream = tabStream = micStream = recorder = audioCtx = null;
   toTab({ type: "WS_CLOSED" });
   toSW({ type: "WS_CLOSED" });
-  targetTabId = null;
 }
 
 // 通知 service worker：offscreen 已就緒，可送出 OFFSCREEN_START
@@ -140,7 +197,6 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.target !== "offscreen") return;
   if (msg.type === "OFFSCREEN_START") {
     settings = msg.settings;
-    targetTabId = msg.tabId;
     startCapture(msg.streamId).catch((e) => {
       starting = false;
       toTab({ type: "WS_ERROR", message: String(e && e.message ? e.message : e) });

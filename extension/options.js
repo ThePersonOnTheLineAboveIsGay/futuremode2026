@@ -1,5 +1,19 @@
 const fields = ["backendUrl", "analysisLanguage", "confidenceThreshold", "meetingContext", "sendCaptions"];
 
+document.getElementById("grantMic").addEventListener("click", async () => {
+  const status = document.getElementById("micStatus");
+  status.classList.remove("err");
+  status.textContent = "請求中…";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop()); // 只是要拿到授權，不需要真的錄
+    status.textContent = "已允許 ✓";
+  } catch (e) {
+    status.classList.add("err");
+    status.textContent = "失敗：" + (e && e.message ? e.message : e);
+  }
+});
+
 loadSettings().then((s) => {
   document.getElementById("backendUrl").value = s.backendUrl;
   document.getElementById("analysisLanguage").value = s.analysisLanguage;

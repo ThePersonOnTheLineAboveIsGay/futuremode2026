@@ -6,17 +6,17 @@
 ```
 Google Meet 分頁
   └─ Chrome 擴充功能 (MV3)
-       ├─ offscreen：chrome.tabCapture 擷取分頁音訊，每 25s 一段
+       ├─ offscreen：chrome.tabCapture 擷取分頁音訊＋麥克風，混成一軌，每 25s 一段
        ├─ WebSocket 上傳音訊段 / 接收分析結果
        └─ content script：右下角浮層顯示「不可行提案 + 理由」
                     │
 FastAPI 後端 ───────┘
-  ├─ Gemini API（音訊 → 文字）   逐段轉錄 → 滾動逐字稿
-  └─ Gemini API（結構化 JSON）   每 ~30s 分析最近視窗
+  ├─ OpenRouter（Whisper，音訊 → 文字）   逐段轉錄 → 滾動逐字稿
+  └─ Gemini API（結構化 JSON）           每 ~30s 分析最近視窗
        只有 verdict=infeasible 且 confidence≥門檻、且未回報過 → 推播
 ```
 
-轉錄與分析**都走同一個 Gemini 模型**（預設 `gemini-3.6-flash`）。
+轉錄走 OpenRouter 的 Whisper 端點（預設 `openai/whisper-large-v3`），分析走 Gemini（預設 `gemini-3.6-flash`）。
 判斷為「先做通用版」：模型用一般商業／技術常識判斷，不接自訂規則或知識庫。
 
 ---
@@ -33,10 +33,10 @@ python -m venv .venv
 #  或直接用 .\.venv\Scripts\python.exe 取代下面的 python / pytest / uvicorn
 pip install -r requirements.txt
 
-copy .env.example .env    # 填入 GEMINI_API_KEY
+copy .env.example .env    # 填入 GEMINI_API_KEY 與 OPENROUTER_API_KEY
 ```
 
-金鑰在 <https://aistudio.google.com/apikey> 申請。
+Gemini 金鑰在 <https://aistudio.google.com/apikey> 申請，OpenRouter 金鑰在 <https://openrouter.ai/settings/keys> 申請。
 
 啟動：
 
@@ -50,9 +50,10 @@ uvicorn app.main:app --reload --port 8000
 
 | 變數 | 預設 | 說明 |
 |---|---|---|
-| `GEMINI_API_KEY` | — | 必填 |
-| `GEMINI_MODEL` | `gemini-3.6-flash` | 轉錄＋分析共用；可換成更新的型號 |
-| `TRANSCRIBE_LANGUAGE_HINT` | `繁體中文` | 給模型的語言提示；留空則不提示 |
+| `GEMINI_API_KEY` | — | 必填，分析用 |
+| `GEMINI_MODEL` | `gemini-3.6-flash` | 分析用；可換成更新的型號 |
+| `OPENROUTER_API_KEY` | — | 必填，轉錄用 |
+| `OPENROUTER_MODEL` | `openai/whisper-large-v3` | 轉錄用；OpenRouter 上支援音訊輸入的模型都可換 |
 | `ANALYSIS_LANGUAGE` | `zh-TW` | 分析結果輸出語言 |
 | `ANALYZE_MIN_NEW_SEGMENTS` | `3` | 新增幾段逐字稿就分析一次 |
 | `ANALYZE_MIN_INTERVAL_SECONDS` | `30` | 或距上次分析多久就分析 |
@@ -64,14 +65,14 @@ uvicorn app.main:app --reload --port 8000
 
 1. 開 `chrome://extensions`，右上角開「開發人員模式」。
 2. 「載入未封裝項目」→ 選 `extension/` 資料夾。
-3. （可選）右鍵點擴充功能圖示 →「選項 / Options」，確認後端位址
-   （預設 `ws://localhost:8000/ws/new`）、填會議背景、調信心門檻。
+3. 右鍵點擴充功能圖示 →「選項 / Options」，先按**「允許麥克風」**（會跳出瀏覽器的麥克風授權提示，只需要按一次；不按也能用，只是收不到麥克風，只有分頁聲音）；同時可確認後端位址（預設 `ws://localhost:8000/ws/new`）、填會議背景、調信心門檻。
 4. 進入一場 Google Meet，右下角會出現深色面板（含除錯記錄）。
 5. **點 Chrome 工具列上的綠色方塊圖示** → 開始監聽（首次會要求選擇並允許擷取此分頁）。
    - 監聽中時圖示會有綠色 ● 標記。
    - 偵測到不可行提案時面板會展開並新增理由卡片。
 6. 再點一次圖示 → 停止。
 
+> 分頁聲音（其他與會者）跟你自己的麥克風會混成同一軌一起送去轉錄，能聽到雙方的話。
 > 「開始／停止」必須由點圖示觸發（Chrome 的 `activeTab` 限制），面板上沒有開始按鈕。
 
 > 「擷取 Meet 字幕」選項預設關閉；開啟後會讀取字幕文字補上發言者脈絡
@@ -90,7 +91,7 @@ pytest        # 或 .\.venv\Scripts\python.exe -m pytest
 
 涵蓋 analyzer 觸發條件、信心門檻過濾、提案去重、schema 解析。
 
-### 轉錄煙霧測試（需 GEMINI_API_KEY）
+### 轉錄煙霧測試（需 OPENROUTER_API_KEY）
 
 錄一段中文語音存成 `sample.webm`（或用 Meet 錄影匯出的音訊 / 一段 wav），然後：
 
@@ -120,7 +121,7 @@ cd backend
 
 ## 隱私
 
-執行時會把會議音訊與逐字稿送 Google（Gemini API）。
+執行時會把會議音訊送 OpenRouter（Whisper）轉錄、逐字稿送 Google（Gemini API）分析。
 請在會議前告知與會者。後端目前不落地儲存逐字稿（僅存在記憶體，session 結束即釋放）。
 
 ## 目前不包含（MVP 範圍外）
