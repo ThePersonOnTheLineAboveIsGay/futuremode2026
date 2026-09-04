@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import array
 import io
 import math
 import sys
@@ -34,38 +35,44 @@ def list_devices() -> None:
     print(sd.query_devices())
 
 
-def pcm16_wav_bytes(audio) -> bytes:
-    frames = bytearray()
-    for sample in audio.reshape(-1):
-        clipped = max(-1.0, min(1.0, float(sample)))
-        frames.extend(int(clipped * 32767).to_bytes(2, byteorder="little", signed=True))
-
+def pcm16_wav_bytes(pcm_audio: bytes) -> bytes:
     output = io.BytesIO()
     with wave.open(output, "wb") as wav_file:
         wav_file.setnchannels(CHANNELS)
         wav_file.setsampwidth(2)
         wav_file.setframerate(SAMPLE_RATE)
-        wav_file.writeframes(bytes(frames))
+        wav_file.writeframes(pcm_audio)
     return output.getvalue()
 
 
-def audio_rms(audio) -> float:
-    flat = audio.reshape(-1)
-    if len(flat) == 0:
+def audio_rms(pcm_audio: bytes) -> float:
+    samples = array.array("h")
+    samples.frombytes(pcm_audio)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    if not samples:
         return 0.0
-    return math.sqrt(sum(float(sample) * float(sample) for sample in flat) / len(flat))
+    return math.sqrt(sum(sample * sample for sample in samples) / len(samples)) / 32768.0
 
 
-def record_chunk(seconds: float, device: int | None):
+def record_chunk(seconds: float, device: int | None) -> bytes:
     frames = int(seconds * SAMPLE_RATE)
-    return sd.rec(
-        frames,
+    with sd.RawInputStream(
+        device=device,
         samplerate=SAMPLE_RATE,
         channels=CHANNELS,
-        dtype="float32",
-        device=device,
-        blocking=True,
-    )
+        dtype="int16",
+    ) as stream:
+        chunks: list[bytes] = []
+        remaining = frames
+        while remaining > 0:
+            read_frames = min(remaining, 1024)
+            data, overflowed = stream.read(read_frames)
+            if overflowed:
+                print("WARN: audio input overflowed; this chunk may be incomplete.", file=sys.stderr)
+            chunks.append(bytes(data))
+            remaining -= read_frames
+    return b"".join(chunks)
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -95,8 +102,8 @@ async def run(args: argparse.Namespace) -> int:
         while True:
             started_at = time.strftime("%H:%M:%S")
             print(f"\n[{started_at}] chunk #{chunk_no}: recording...")
-            audio = record_chunk(args.seconds, args.device)
-            rms = audio_rms(audio)
+            pcm_audio = record_chunk(args.seconds, args.device)
+            rms = audio_rms(pcm_audio)
             print(f"[{time.strftime('%H:%M:%S')}] chunk #{chunk_no}: rms={rms:.5f}")
 
             if rms < args.silence_rms:
@@ -105,7 +112,7 @@ async def run(args: argparse.Namespace) -> int:
                 continue
 
             try:
-                wav_audio = pcm16_wav_bytes(audio)
+                wav_audio = pcm16_wav_bytes(pcm_audio)
                 transcript = await transcriber.transcribe(wav_audio, "audio/wav", " ".join(context[-4:]))
             except KeyboardInterrupt:
                 raise

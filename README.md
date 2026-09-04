@@ -123,6 +123,9 @@ OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 安裝依賴後執行：
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r backend\requirements.txt
 python backend/testvoice.py
 ```
 
