@@ -216,7 +216,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
                 result.target_speaker or "none",
                 result.explanation or "none",
             )
-            if should_interject(result, settings.interjection_confidence_threshold):
+            if should_interject(result):
                 message_text = format_interjection(result.suggested_interjection, result.target_speaker)
                 allow_chat = await rooms.reserve_chat_slot(
                     meeting_id, result.target_speaker, settings.chat_cooldown_seconds
@@ -241,11 +241,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
                     message_text,
                 )
             else:
-                logger.info(
-                    "[%s] No interjection (threshold=%.2f or no clear issue)",
-                    meeting_id,
-                    settings.interjection_confidence_threshold,
-                )
+                logger.info("[%s] No interjection (no clear issue)", meeting_id)
         except Exception as exc:
             logger.exception("Contradiction analysis failed in room %s", meeting_id)
             await safe_send_json(websocket, {"type": "error", "message": f"內容分析失敗：{exc}"})
@@ -371,10 +367,12 @@ def format_interjection(message: str, target_speaker: str | None) -> str:
     return f"🤖 AI 提醒：{clean}"
 
 
-def should_interject(result: InterjectionAnalysis, threshold: float) -> bool:
+def should_interject(result: InterjectionAnalysis) -> bool:
+    """Trust the model's own has_issue judgment directly — no confidence
+    cutoff. `interjection_confidence_threshold` is kept in settings purely so
+    `confidence` still shows up in logs/UI for humans to judge, not as a gate."""
     return (
         result.has_issue
         and result.issue_type != "none"
         and bool(result.suggested_interjection.strip())
-        and result.confidence >= threshold
     )

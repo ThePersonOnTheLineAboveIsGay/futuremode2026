@@ -2,16 +2,17 @@ from app.contradiction import InterjectionAnalysis
 from app.main import format_interjection, should_interject
 
 
-def test_interjects_only_above_threshold() -> None:
+def test_interjects_regardless_of_confidence_score() -> None:
+    # There is no confidence cutoff any more: a low-confidence has_issue=True
+    # result still interjects, trusting the model's own judgment directly.
     issue = InterjectionAnalysis(
         has_issue=True,
         issue_type="contradiction",
         explanation="A 改成 B",
         suggested_interjection="要說明改變原因嗎？",
-        confidence=0.8,
+        confidence=0.2,
     )
-    assert should_interject(issue, 0.7)
-    assert not should_interject(issue, 0.9)
+    assert should_interject(issue)
 
 
 def test_decision_review_interjects_like_any_other_issue_type() -> None:
@@ -22,7 +23,7 @@ def test_decision_review_interjects_like_any_other_issue_type() -> None:
         suggested_interjection="要不要先確認交期跟成本哪個對這次比較重要？",
         confidence=0.8,
     )
-    assert should_interject(issue, 0.7)
+    assert should_interject(issue)
 
 
 def test_none_never_interjects() -> None:
@@ -33,7 +34,7 @@ def test_none_never_interjects() -> None:
         suggested_interjection="",
         confidence=1,
     )
-    assert not should_interject(no_issue, 0.7)
+    assert not should_interject(no_issue)
 
 
 def test_interjection_prefix_and_target_are_enforced() -> None:

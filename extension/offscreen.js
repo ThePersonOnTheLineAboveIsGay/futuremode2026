@@ -1,9 +1,16 @@
 const VAD_FRAME_MS = 100;
 const START_RMS = 0.012;
 const SILENCE_RMS = 0.006;
-const SILENCE_MS = 900;
 const MIN_SEGMENT_MS = 1200;
-const MAX_SEGMENT_MS = 12000;
+// Segments target ~30s so one chunk can span a whole train of thought instead
+// of one STT call per short sentence. Before the target, only a clearly
+// "I'm done talking" pause ends it early (a breath shouldn't); once the
+// target is reached, any natural pause ends it — never mid-sentence — and
+// SEGMENT_HARD_LIMIT_MS is just a safety net for speech that never pauses.
+const SEGMENT_TARGET_MS = 30000;
+const SEGMENT_HARD_LIMIT_MS = 90000;
+const EARLY_FINISH_SILENCE_MS = 2500;
+const POST_TARGET_SILENCE_MS = 900;
 const PING_INTERVAL_MS = 25000;
 const RECONNECT_DELAY_MS = 3000;
 const BROADCAST_DEDUP_WINDOW_MS = 400;
@@ -168,8 +175,13 @@ function createPipeline(label, { emitStatus }) {
 
     const durationMs = now - segmentStartedAt;
     const silentMs = silenceStartedAt ? now - silenceStartedAt : 0;
-    if (durationMs >= MAX_SEGMENT_MS) stopActiveSegment(true, "max-duration");
-    else if (durationMs >= MIN_SEGMENT_MS && silentMs >= SILENCE_MS) stopActiveSegment(true, "silence");
+    const pastTarget = durationMs >= SEGMENT_TARGET_MS;
+    const silenceThreshold = pastTarget ? POST_TARGET_SILENCE_MS : EARLY_FINISH_SILENCE_MS;
+    if (durationMs >= SEGMENT_HARD_LIMIT_MS) {
+      stopActiveSegment(true, "hard-limit");
+    } else if (durationMs >= MIN_SEGMENT_MS && silentMs >= silenceThreshold) {
+      stopActiveSegment(true, pastTarget ? "target-reached" : "early-finish");
+    }
   }
 
   function currentRms() {
