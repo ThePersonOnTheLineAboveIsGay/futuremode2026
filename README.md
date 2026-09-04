@@ -112,6 +112,40 @@ pytest backend/tests
 uvicorn app.main:app --app-dir backend --reload
 ```
 
+### 單獨測試語音辨識
+
+如果你想先確認麥克風與 OpenRouter Whisper 辨識準不準，不用開 Google Meet，也不用啟動後端 server。先確認 `.env` 有填：
+
+```ini
+OPENROUTER_API_KEY=sk-or-v1-你的金鑰
+```
+
+安裝依賴後執行：
+
+```powershell
+python backend/testvoice.py
+```
+
+它會每 4 秒錄一段麥克風音訊，送到 `openai/whisper-large-v3`，然後即時印出 RMS 音量與辨識文字。RMS 很低代表程式幾乎沒收到你的聲音。
+
+列出麥克風裝置：
+
+```powershell
+python backend/testvoice.py --list-devices
+```
+
+指定麥克風：
+
+```powershell
+python backend/testvoice.py --device 1
+```
+
+縮短或拉長每段辨識時間：
+
+```powershell
+python backend/testvoice.py --seconds 3
+```
+
 WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
 
 ```json
