@@ -1,6 +1,6 @@
 // 在 Google Meet 頁面顯示狀態、分析結果與除錯記錄。開始/停止在工具列圖示。
 (() => {
-  const VERSION = "0.9.0";
+  const VERSION = "0.10.1";
   const host = document.createElement("div");
   host.id = "mfa-root";
   document.documentElement.appendChild(host);
@@ -47,6 +47,7 @@
   const cards = shadow.querySelector(".cards");
   const msgEl = shadow.querySelector(".msg");
   const logEl = shadow.querySelector(".log");
+  let settings = null;
 
   function log(line) {
     logEl.textContent += `${new Date().toLocaleTimeString()}  ${line}\n`;
@@ -83,12 +84,70 @@
     `;
     el.querySelector(".x").addEventListener("click", () => el.remove());
     cards.prepend(el);
+
+    if (settings && settings.postToMeetChat && location.hostname === "meet.google.com") {
+      const reasonsLine = (item.reasons || []).join("；");
+      const text = `⚠ 不可行提案：${item.topic || ""}${reasonsLine ? "\n理由：" + reasonsLine : ""}`;
+      sendToMeetChat(text);
+    }
   }
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
     );
+  }
+
+  // ---------- 可選：把偵測到的不可行提案自動發到 Meet 聊天室 ----------
+  // 靠抓 DOM 打字＋按 Enter 送出，屬 best-effort，Meet 改版可能失效
+  // （跟下面擷取字幕那段用的是同一種「盡力而為」策略）。
+  function findChatInput() {
+    return document.querySelector(
+      [
+        '[aria-label="傳送訊息"]',
+        '[aria-label="Send a message"]',
+        'textarea[aria-label*="訊息"]',
+        'textarea[aria-label*="message" i]',
+        '[contenteditable="true"][aria-label*="訊息"]',
+        '[contenteditable="true"][aria-label*="message" i]',
+      ].join(",")
+    );
+  }
+
+  function openChatPanel() {
+    if (findChatInput()) return;
+    const btn = document.querySelector('button[aria-label*="聊天"], button[aria-label*="Chat" i]');
+    if (btn) btn.click();
+  }
+
+  async function sendToMeetChat(text) {
+    try {
+      openChatPanel();
+      let input = findChatInput();
+      for (let i = 0; i < 10 && !input; i++) {
+        await new Promise((r) => setTimeout(r, 200));
+        input = findChatInput();
+      }
+      if (!input) {
+        log("✗ 找不到 Meet 聊天輸入框，沒送進聊天室（Meet 改版了？）");
+        return;
+      }
+      input.focus();
+      if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
+        setter.call(input, text);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      } else {
+        document.execCommand("insertText", false, text);
+      }
+      await new Promise((r) => setTimeout(r, 80));
+      ["keydown", "keyup"].forEach((type) =>
+        input.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }))
+      );
+      log("已發到 Meet 聊天室：" + text.slice(0, 30).replace(/\n/g, " ") + (text.length > 30 ? "…" : ""));
+    } catch (e) {
+      log("✗ 發到 Meet 聊天室失敗：" + (e && e.message ? e.message : e));
+    }
   }
 
   // 啟動逾時保護：點了圖示卻卡在「starting」太久（常見是 offscreen 文件
@@ -137,9 +196,10 @@
     setStatus(s && s.running ? "ready" : "idle");
   });
 
-  // ---------- 可選：擷取 Meet 字幕做為發言者來源 ----------
+  // ---------- 載入設定：字幕擷取（可選）＋ 聊天室推播開關 ----------
   loadSettings().then((s) => {
-    log("設定：後端=" + s.backendUrl + "，字幕=" + s.sendCaptions);
+    settings = s;
+    log("設定：後端=" + s.backendUrl + "，字幕=" + s.sendCaptions + "，聊天室推播=" + s.postToMeetChat);
     if (!s.sendCaptions) return;
     const seen = new Set();
     const observer = new MutationObserver(() => {

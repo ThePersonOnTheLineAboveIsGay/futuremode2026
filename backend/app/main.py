@@ -26,6 +26,11 @@ logger = logging.getLogger("meeting-feasibility-ai")
 
 app = FastAPI(title="Meeting Feasibility AI")
 
+# session_id -> Session。讓斷線重連（背景 exponential-backoff 自動重連、
+# 或網路短暫抖動）可以接回同一個 Session，不會把逐字稿脈絡跟已回報清單全部弄丟。
+# 只有客戶端主動送 "stop" 才會把 session 從這裡清掉（見 ws_endpoint）。
+_sessions: dict[str, Session] = {}
+
 _settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
@@ -87,14 +92,18 @@ async def ws_endpoint(ws: WebSocket, session_id: str) -> None:
     await ws.accept()
     if session_id in ("", "new"):
         session_id = uuid.uuid4().hex[:12]
+        session = Session(session_id=session_id)
+    else:
+        session = _sessions.get(session_id) or Session(session_id=session_id)
+    _sessions[session_id] = session
 
-    session = Session(session_id=session_id)
     queue: "asyncio.Queue[tuple]" = asyncio.Queue(maxsize=32)
     worker = asyncio.create_task(_worker(ws, session, queue))
 
     await _send(ws, StatusMessage(state="ready", detail=session_id))
-    logger.info("session %s connected", session_id)
+    logger.info("session %s connected（已有 %d 句逐字稿）", session_id, len(session.transcript))
 
+    stopped_intentionally = False
     try:
         while True:
             msg = await ws.receive()
@@ -125,9 +134,17 @@ async def ws_endpoint(ws: WebSocket, session_id: str) -> None:
             elif ctype == "caption":
                 await queue.put(("caption", (ctrl.get("speaker", ""), ctrl.get("text", ""))))
             elif ctype == "stop":
+                stopped_intentionally = True
                 break
     except WebSocketDisconnect:
         pass
     finally:
         worker.cancel()
-        logger.info("session %s closed (%d utterances)", session_id, len(session.transcript))
+        if stopped_intentionally:
+            _sessions.pop(session_id, None)
+        logger.info(
+            "session %s closed (%d utterances)%s",
+            session_id,
+            len(session.transcript),
+            "，主動停止已清除" if stopped_intentionally else "，保留供重連接回",
+        )

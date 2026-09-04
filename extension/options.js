@@ -20,6 +20,7 @@ loadSettings().then((s) => {
   document.getElementById("confidenceThreshold").value = s.confidenceThreshold;
   document.getElementById("meetingContext").value = s.meetingContext;
   document.getElementById("sendCaptions").checked = s.sendCaptions;
+  document.getElementById("postToMeetChat").checked = s.postToMeetChat;
 });
 
 document.getElementById("save").addEventListener("click", async () => {
@@ -29,6 +30,7 @@ document.getElementById("save").addEventListener("click", async () => {
     confidenceThreshold: parseFloat(document.getElementById("confidenceThreshold").value) || 0.6,
     meetingContext: document.getElementById("meetingContext").value.trim(),
     sendCaptions: document.getElementById("sendCaptions").checked,
+    postToMeetChat: document.getElementById("postToMeetChat").checked,
   });
   const saved = document.getElementById("saved");
   saved.textContent = "已儲存 ✓";

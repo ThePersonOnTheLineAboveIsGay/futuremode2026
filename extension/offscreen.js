@@ -14,6 +14,7 @@ let running = false;
 let starting = false;
 let settings = null;
 let reconnectDelay = 1000;
+let resumeSessionId = null; // 拿到後端 session id 後記著，重連時接回同一個 session
 
 function toSW(msg) {
   chrome.runtime.sendMessage({ from: "offscreen", ...msg }).catch(() => {});
@@ -117,8 +118,16 @@ function startRecorderCycle() {
   chunkTimer = setTimeout(() => recorder.state !== "inactive" && recorder.stop(), CHUNK_MS);
 }
 
+function wsUrlForResume(id) {
+  // 把 backendUrl 最後一段（預設 "new"）換成要接回的 session id。
+  return settings.backendUrl.replace(/\/ws\/[^/?#]*/, "/ws/" + id);
+}
+
 function connectWs() {
-  ws = new WebSocket(settings.backendUrl);
+  // 重連（斷線自動重試）時帶回上次拿到的 session id，讓後端接回同一個
+  // Session（逐字稿脈絡、已回報過的不可行提案清單才不會因為短暫斷線就重置）。
+  const url = resumeSessionId ? wsUrlForResume(resumeSessionId) : settings.backendUrl;
+  ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
@@ -142,6 +151,7 @@ function connectWs() {
       return;
     }
     if (data.type === "status" && data.state === "ready") {
+      resumeSessionId = data.detail;
       toTab({ type: "SESSION", sessionId: data.detail });
       toSW({ type: "SESSION", sessionId: data.detail }); // 讓 service worker 記帳（GET_STATE 用）
     } else if (data.type === "transcript") {
@@ -172,6 +182,7 @@ function connectWs() {
 function stopAll() {
   running = false;
   starting = false;
+  resumeSessionId = null; // 使用者主動停止：下次「開始」是全新 session，不接回舊的
   clearTimeout(chunkTimer);
   try {
     recorder && recorder.state !== "inactive" && recorder.stop();

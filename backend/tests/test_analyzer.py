@@ -131,6 +131,19 @@ async def test_duplicate_topic_reported_once():
     assert second == []
 
 
+def test_similar_topic_wording_is_deduped():
+    s = _session()
+    assert s.is_new_report("下週一前把整個系統改用區塊鏈重寫", "infeasible") is True
+    # 措辭不同但講的是同一件事：字元相似度夠高，應該被擋掉
+    assert s.is_new_report("把系統改用區塊鏈重寫", "infeasible") is False
+
+
+def test_different_topics_are_not_deduped():
+    s = _session()
+    assert s.is_new_report("下週一前把整個系統改用區塊鏈重寫", "infeasible") is True
+    assert s.is_new_report("砍掉現有團隊全部外包", "infeasible") is True
+
+
 @pytest.mark.asyncio
 async def test_not_called_when_no_trigger():
     s = _session()

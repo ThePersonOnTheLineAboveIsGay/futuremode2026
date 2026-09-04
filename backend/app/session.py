@@ -1,11 +1,15 @@
 """每個會議 session 的逐字稿緩衝與去重狀態。"""
 from __future__ import annotations
 
+import difflib
 import re
 import time
 from dataclasses import dataclass, field
 
 from .config import get_settings
+
+# 措辭相近（非逐字相同）就視為同一提案的相似度門檻，見 is_new_report。
+_SIMILAR_TOPIC_RATIO = 0.6
 
 
 @dataclass
@@ -71,10 +75,17 @@ class Session:
     # ---------- 去重 ----------
 
     def is_new_report(self, topic: str, verdict: str) -> bool:
-        """同一提案、同一 verdict 只回報一次（字面完全相同才擋；語意重複交給 prompt 處理）。"""
+        """同一提案只回報一次。分兩層擋重複：
+        1. 字面幾乎相同（字元相似度 ≥ 門檻）→ 直接擋，不管模型有沒有照 prompt 指示。
+        2. 完全相同才會覆寫 verdict 記錄（例如 needs_info 後來變 infeasible 這種轉變要放行）。
+        """
         key = _normalize_topic(topic)
         if self._reported.get(key) == verdict:
             return False
+        if verdict == "infeasible":
+            for prev in self.reported_topics:
+                if difflib.SequenceMatcher(None, key, _normalize_topic(prev)).ratio() >= _SIMILAR_TOPIC_RATIO:
+                    return False
         self._reported[key] = verdict
         if verdict == "infeasible":
             self.reported_topics.append(topic)
