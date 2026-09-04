@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -101,148 +102,172 @@ async def meeting_socket(websocket: WebSocket) -> None:
 
     await websocket.send_json({"type": "join_ack", "meeting_id": meeting_id})
     await websocket.send_json({"type": "status", "status": "connected", "meeting_id": meeting_id})
-    try:
+
+    async def process_message(message: dict) -> None:
+        nonlocal mime_type
+        text = ""
+        speaker: str | None = None
+        source = "stt"
+        timestamp = datetime.now(timezone.utc)
+
+        if message.get("bytes") is not None:
+            try:
+                logger.info(
+                    "[%s] AI audio chunk received | bytes=%d | mime=%s",
+                    meeting_id,
+                    len(message["bytes"]),
+                    mime_type,
+                )
+                text = await stt.transcribe(message["bytes"], mime_type, " ".join(stt_context))
+                speaker = rooms.participant_name(meeting_id, websocket)
+            except Exception as exc:
+                logger.exception("Audio transcription failed in room %s", meeting_id)
+                await websocket.send_json({"type": "error", "message": f"語音辨識失敗：{exc}"})
+                return
+        elif message.get("text") is not None:
+            try:
+                payload = json.loads(message["text"])
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "訊息必須是 JSON"})
+                return
+            if payload.get("meeting_id") not in (None, meeting_id):
+                await websocket.send_json({"type": "error", "message": "訊息 meeting_id 與連線房間不符"})
+                return
+            if payload.get("type") == "config":
+                mime_type = str(payload.get("mime_type", mime_type))
+                logger.info("[%s] Client configured | audio=%s", meeting_id, mime_type)
+                return
+            if payload.get("type") == "summarize":
+                await handle_summarize(websocket, rooms, summarizer, meeting_id)
+                return
+            if payload.get("type") == "transcript":
+                text = str(payload.get("text", "")).strip()
+                speaker = clean_speaker(payload.get("speaker"))
+                source = "manual"
+                timestamp = parse_timestamp(payload.get("timestamp"))
+            else:
+                return
+
+        if not text:
+            if source == "stt":
+                logger.info("[%s] Audio chunk contained no speech", meeting_id)
+            return
+
+        if source == "stt":
+            stt_context.append(text)
+
+        logger.info(
+            "[%s] Transcript received | source=%s | speaker=%s | text=%s",
+            meeting_id,
+            source,
+            speaker or "unknown",
+            text,
+        )
+
+        latest, history, analyze_now = await rooms.add_utterance(
+            meeting_id=meeting_id,
+            text=text,
+            speaker=speaker,
+            timestamp=timestamp,
+            source=source,
+            analysis_interval_seconds=settings.analysis_interval_seconds,
+        )
+        if latest is None:
+            logger.info("[%s] Duplicate/empty transcript ignored", meeting_id)
+            return
+
+        await websocket.send_json({
+            "type": "transcript",
+            "meeting_id": meeting_id,
+            "speaker": latest.speaker,
+            "text": latest.text,
+            "source": latest.source,
+            "timestamp": latest.timestamp.timestamp(),
+        })
+        if not analyze_now:
+            logger.info(
+                "[%s] Saved transcript; AI analysis skipped (no history or %ss throttle)",
+                meeting_id,
+                settings.analysis_interval_seconds,
+            )
+            return
+
+        logger.info("[%s] Sending transcript history to %s for analysis", meeting_id, settings.ai_provider)
+        await websocket.send_json({"type": "status", "status": "analyzing", "meeting_id": meeting_id})
+        try:
+            result = await detector.analyze(history, latest)
+            logger.info(
+                "[%s] AI result | issue=%s | type=%s | confidence=%.2f | target=%s | explanation=%s",
+                meeting_id,
+                result.has_issue,
+                result.issue_type,
+                result.confidence,
+                result.target_speaker or "none",
+                result.explanation or "none",
+            )
+            if should_interject(result, settings.interjection_confidence_threshold):
+                message_text = format_interjection(result.suggested_interjection, result.target_speaker)
+                allow_chat = await rooms.reserve_chat_slot(
+                    meeting_id, result.target_speaker, settings.chat_cooldown_seconds
+                )
+                await rooms.broadcast(
+                    meeting_id,
+                    {
+                        "type": "interjection",
+                        "meeting_id": meeting_id,
+                        "target_speaker": result.target_speaker,
+                        "issue_type": result.issue_type,
+                        "explanation": result.explanation,
+                        "message": message_text,
+                        "confidence": result.confidence,
+                    },
+                    allow_chat=allow_chat,
+                )
+                logger.info(
+                    "[%s] INTERJECTION broadcast | chat=%s | message=%s",
+                    meeting_id,
+                    allow_chat,
+                    message_text,
+                )
+            else:
+                logger.info(
+                    "[%s] No interjection (threshold=%.2f or no clear issue)",
+                    meeting_id,
+                    settings.interjection_confidence_threshold,
+                )
+        except Exception as exc:
+            logger.exception("Contradiction analysis failed in room %s", meeting_id)
+            await websocket.send_json({"type": "error", "message": f"內容分析失敗：{exc}"})
+        finally:
+            await websocket.send_json({"type": "status", "status": "listening", "meeting_id": meeting_id})
+
+    # Receiving off the socket and processing each message (STT + AI calls)
+    # are split into two tasks sharing a FIFO queue. A slow transcription or
+    # analysis call only ever delays *processing* of what follows — it never
+    # blocks draining the socket, so a burst of audio segments can't back up
+    # or stall behind one another.
+    queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+    async def receive_loop() -> None:
         while True:
             message = await websocket.receive()
             if message["type"] == "websocket.disconnect":
-                break
+                await queue.put(None)
+                return
+            await queue.put(message)
 
-            text = ""
-            speaker: str | None = None
-            source = "stt"
-            timestamp = datetime.now(timezone.utc)
+    async def process_loop() -> None:
+        while True:
+            message = await queue.get()
+            if message is None:
+                return
+            await process_message(message)
 
-            if message.get("bytes") is not None:
-                try:
-                    logger.info(
-                        "[%s] AI audio chunk received | bytes=%d | mime=%s",
-                        meeting_id,
-                        len(message["bytes"]),
-                        mime_type,
-                    )
-                    text = await stt.transcribe(message["bytes"], mime_type, " ".join(stt_context))
-                    speaker = rooms.participant_name(meeting_id, websocket)
-                except Exception as exc:
-                    logger.exception("Audio transcription failed in room %s", meeting_id)
-                    await websocket.send_json({"type": "error", "message": f"語音辨識失敗：{exc}"})
-                    continue
-            elif message.get("text") is not None:
-                try:
-                    payload = json.loads(message["text"])
-                except json.JSONDecodeError:
-                    await websocket.send_json({"type": "error", "message": "訊息必須是 JSON"})
-                    continue
-                if payload.get("meeting_id") not in (None, meeting_id):
-                    await websocket.send_json({"type": "error", "message": "訊息 meeting_id 與連線房間不符"})
-                    continue
-                if payload.get("type") == "config":
-                    mime_type = str(payload.get("mime_type", mime_type))
-                    logger.info("[%s] Client configured | audio=%s", meeting_id, mime_type)
-                    continue
-                if payload.get("type") == "summarize":
-                    await handle_summarize(websocket, rooms, summarizer, meeting_id)
-                    continue
-                if payload.get("type") == "transcript":
-                    text = str(payload.get("text", "")).strip()
-                    speaker = clean_speaker(payload.get("speaker"))
-                    source = "manual"
-                    timestamp = parse_timestamp(payload.get("timestamp"))
-                else:
-                    continue
-
-            if not text:
-                if source == "stt":
-                    logger.info("[%s] Audio chunk contained no speech", meeting_id)
-                continue
-
-            if source == "stt":
-                stt_context.append(text)
-
-            logger.info(
-                "[%s] Transcript received | source=%s | speaker=%s | text=%s",
-                meeting_id,
-                source,
-                speaker or "unknown",
-                text,
-            )
-
-            latest, history, analyze_now = await rooms.add_utterance(
-                meeting_id=meeting_id,
-                text=text,
-                speaker=speaker,
-                timestamp=timestamp,
-                source=source,
-                analysis_interval_seconds=settings.analysis_interval_seconds,
-            )
-            if latest is None:
-                logger.info("[%s] Duplicate/empty transcript ignored", meeting_id)
-                continue
-
-            await websocket.send_json({
-                "type": "transcript",
-                "meeting_id": meeting_id,
-                "speaker": latest.speaker,
-                "text": latest.text,
-                "source": latest.source,
-                "timestamp": latest.timestamp.timestamp(),
-            })
-            if not analyze_now:
-                logger.info(
-                    "[%s] Saved transcript; AI analysis skipped (no history or %ss throttle)",
-                    meeting_id,
-                    settings.analysis_interval_seconds,
-                )
-                continue
-
-            logger.info("[%s] Sending transcript history to %s for analysis", meeting_id, settings.ai_provider)
-            await websocket.send_json({"type": "status", "status": "analyzing", "meeting_id": meeting_id})
-            try:
-                result = await detector.analyze(history, latest)
-                logger.info(
-                    "[%s] AI result | issue=%s | type=%s | confidence=%.2f | target=%s | explanation=%s",
-                    meeting_id,
-                    result.has_issue,
-                    result.issue_type,
-                    result.confidence,
-                    result.target_speaker or "none",
-                    result.explanation or "none",
-                )
-                if should_interject(result, settings.interjection_confidence_threshold):
-                    message_text = format_interjection(result.suggested_interjection, result.target_speaker)
-                    allow_chat = await rooms.reserve_chat_slot(
-                        meeting_id, result.target_speaker, settings.chat_cooldown_seconds
-                    )
-                    await rooms.broadcast(
-                        meeting_id,
-                        {
-                            "type": "interjection",
-                            "meeting_id": meeting_id,
-                            "target_speaker": result.target_speaker,
-                            "issue_type": result.issue_type,
-                            "explanation": result.explanation,
-                            "message": message_text,
-                            "confidence": result.confidence,
-                        },
-                        allow_chat=allow_chat,
-                    )
-                    logger.info(
-                        "[%s] INTERJECTION broadcast | chat=%s | message=%s",
-                        meeting_id,
-                        allow_chat,
-                        message_text,
-                    )
-                else:
-                    logger.info(
-                        "[%s] No interjection (threshold=%.2f or no clear issue)",
-                        meeting_id,
-                        settings.interjection_confidence_threshold,
-                    )
-            except Exception as exc:
-                logger.exception("Contradiction analysis failed in room %s", meeting_id)
-                await websocket.send_json({"type": "error", "message": f"內容分析失敗：{exc}"})
-            finally:
-                await websocket.send_json({"type": "status", "status": "listening", "meeting_id": meeting_id})
-    except WebSocketDisconnect:
+    try:
+        async with asyncio.TaskGroup() as task_group:
+            task_group.create_task(receive_loop())
+            task_group.create_task(process_loop())
+    except* WebSocketDisconnect:
         logger.info("Meeting client disconnected from room %s", meeting_id)
     finally:
         await rooms.disconnect(meeting_id, websocket)
@@ -274,10 +299,13 @@ async def handle_summarize(
     summarizer: Summarizer,
     meeting_id: str,
 ) -> None:
-    """Summarize the whole meeting so far (not the rolling analysis window) and
-    broadcast the result to the room, posting it to Meet chat like an
-    interjection. Empty/failed attempts only reply to the requester — nothing
-    useful to share with the room in that case."""
+    """Summarize the whole meeting so far (not the rolling analysis window).
+    The result always goes back to whoever clicked the button — their own
+    connection is what tries to post it to Meet chat, regardless of the
+    room's separately-designated interjection chat sender, so every Debug
+    click actually reaches chat. Empty/failed attempts are diagnostic-only
+    and must stay out of chat: `send_to_chat` is omitted for those so the
+    client shows them as a card instead of trying to send them."""
     history = rooms.snapshot_history(meeting_id)
     logger.info("[%s] Summarize requested | utterances=%d", meeting_id, len(history))
     if not history:
@@ -298,12 +326,13 @@ async def handle_summarize(
         })
         return
     summary = text.strip() or "（摘要服務沒有回傳文字）"
-    logger.info("[%s] Summary broadcast | utterances=%d", meeting_id, len(history))
-    await rooms.broadcast(
-        meeting_id,
-        {"type": "summary", "meeting_id": meeting_id, "text": summary},
-        allow_chat=True,
-    )
+    logger.info("[%s] Summary sent to requester | utterances=%d", meeting_id, len(history))
+    await websocket.send_json({
+        "type": "summary",
+        "meeting_id": meeting_id,
+        "text": summary,
+        "send_to_chat": True,
+    })
 
 
 def clean_speaker(value: object) -> str | None:
