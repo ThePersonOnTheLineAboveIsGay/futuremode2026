@@ -34,13 +34,13 @@ sudo systemctl enable --now docker
 ```bash
 git clone https://github.com/ThePersonOnTheLineAboveIsGay/futuremode2026.git
 cd futuremode2026
-git switch wuzuan
+git switch wuzuan_3
 ```
 
 已有專案時：
 
 ```bash
-git switch wuzuan
+git switch wuzuan_3
 git pull
 ```
 
@@ -167,7 +167,7 @@ hostname -I
 ws://192.168.1.50:8000/ws/meeting
 ```
 
-並將 `http://192.168.1.50:8000/*` 加入 `extension/manifest.json` 的 `host_permissions`。
+直接在 popup 改這個網址即可，不需要修改 `extension/manifest.json`（WebSocket 連線不受 `host_permissions` 限制）。公開網路或正式部署請使用 `wss://`（可參考 [用 Cloudflare Tunnel 部署](deploy-cloudflare-tunnel.md)）。
 
 使用 UFW 時可開放 TCP 8000：
 

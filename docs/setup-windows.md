@@ -31,13 +31,13 @@ py --version
 ```powershell
 git clone https://github.com/ThePersonOnTheLineAboveIsGay/futuremode2026.git
 Set-Location futuremode2026
-git switch wuzuan
+git switch wuzuan_3
 ```
 
 已有專案時：
 
 ```powershell
-git switch wuzuan
+git switch wuzuan_3
 git pull
 ```
 
@@ -156,9 +156,9 @@ CHAT_COOLDOWN_SECONDS=60
 ws://192.168.1.50:8000/ws/meeting
 ```
 
-並將 `http://192.168.1.50:8000/*` 加到 `extension/manifest.json` 的 `host_permissions`，再重新載入 Extension。
+直接在 popup 改這個網址即可，不需要修改 `extension/manifest.json`（WebSocket 連線不受 `host_permissions` 限制）。
 
-Windows Defender 防火牆若跳出提示，請允許 Docker Desktop或 Python 在私人網路接收連線。公開網路或正式部署請使用 `wss://`。
+Windows Defender 防火牆若跳出提示，請允許 Docker Desktop或 Python 在私人網路接收連線。公開網路或正式部署請使用 `wss://`（可參考 [用 Cloudflare Tunnel 部署](deploy-cloudflare-tunnel.md)）。
 
 ## 9. Windows 常見問題
 
