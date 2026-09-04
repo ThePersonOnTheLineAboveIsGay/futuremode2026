@@ -2,6 +2,8 @@
 
 SITCON Hackathon 2026「Future of Work」專案。Extension 優先讀取 Google Meet 即時字幕中的講者與文字，後端按會議代碼隔離上下文、偵測同一講者的前後矛盾，再把提醒廣播給同一會議室。提醒同時顯示為 Extension 浮動卡片，並由其中一個 Extension 自動送進 Meet 聊天室，讓沒有安裝 Extension 的與會者也看得到。
 
+第一次安裝請閱讀 [`init.md`](init.md)，裡面包含 Windows、macOS、Linux 的完整指令與疑難排解。
+
 ## 資料流程
 
 ```text
