@@ -3,6 +3,7 @@ const errorEl = document.querySelector("#error");
 const urlEl = document.querySelector("#url");
 const ttsEl = document.querySelector("#tts");
 const modeEl = document.querySelector("#mode");
+const ttsDiagnosticEl = document.querySelector("#tts-diagnostic");
 
 init();
 
@@ -10,14 +11,16 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "status") setStatus(message.status !== "disconnected", message.status);
   if (message.type === "error") errorEl.textContent = message.message;
   if (message.type === "caption-status") setMode(message.available ? "captions" : "audio-fallback", message.meeting_id);
+  if (message.type === "tts-diagnostic") showTtsDiagnostic(message.diagnostic);
 });
 
 async function init() {
-  const saved = await chrome.storage.local.get(["listening", "websocketUrl", "ttsEnabled", "backendStatus", "captureMode", "meetingId"]);
+  const saved = await chrome.storage.local.get(["listening", "websocketUrl", "ttsEnabled", "backendStatus", "captureMode", "meetingId", "lastTtsDiagnostic"]);
   urlEl.value = saved.websocketUrl || urlEl.value;
   ttsEl.checked = Boolean(saved.ttsEnabled);
   setStatus(saved.listening, saved.backendStatus);
   setMode(saved.captureMode, saved.meetingId);
+  showTtsDiagnostic(saved.lastTtsDiagnostic);
 }
 
 document.querySelector("#start").addEventListener("click", async () => {
@@ -67,11 +70,29 @@ document.querySelector("#test-interjection").addEventListener("click", async () 
   }
   try {
     const result = await chrome.tabs.sendMessage(tab.id, { target: "content", type: "test-interjection" });
-    errorEl.textContent = result?.ok ? "浮動提醒與語音測試完成。" : (result?.error || "語音測試失敗");
+    if (!result) {
+      errorEl.textContent = "Meet 分頁沒有回覆。請到 chrome://extensions 重新載入 Extension，然後重新整理 Meet 分頁。";
+      return;
+    }
+    if (!result.ok) errorEl.textContent = result.error || "Chrome 沒有提供失敗原因。";
+    else showTtsDiagnostic({ status: "queued", message: `測試已送出；使用語音：${result.diagnostic?.selectedVoice || "系統預設"}` });
   } catch (error) {
-    errorEl.textContent = `語音測試失敗：${error.message}`;
+    const isReceiverMissing = /Receiving end does not exist|Could not establish connection/i.test(error.message);
+    errorEl.textContent = isReceiverMissing
+      ? "Meet 分頁尚未載入新版程式。請重新載入 Extension，再重新整理 Meet 分頁。"
+      : `無法把測試要求送到 Meet 分頁：${error.message}`;
   }
 });
+
+function showTtsDiagnostic(diagnostic) {
+  if (!diagnostic?.message) {
+    ttsDiagnosticEl.textContent = "";
+    ttsDiagnosticEl.dataset.status = "";
+    return;
+  }
+  ttsDiagnosticEl.textContent = `語音診斷：${diagnostic.message}`;
+  ttsDiagnosticEl.dataset.status = diagnostic.status || "";
+}
 
 function setStatus(listening, backendStatus = "") {
   const labels = { connecting: "正在連線…", connected: "已連線", listening: "正在監聽", analyzing: "AI 分析中…", disconnected: "連線中斷" };

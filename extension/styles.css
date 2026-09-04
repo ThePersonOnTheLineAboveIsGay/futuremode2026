@@ -14,3 +14,7 @@ button { flex:1; border:0; border-radius:9px; padding:10px; background:#7c3aed; 
 button.secondary { background:#273449; }
 .test { width:100%; margin-top:8px; }
 #error { min-height:18px; margin:10px 0 0; color:#fca5a5; font-size:12px; }
+#tts-diagnostic { margin:10px 0 0; padding:8px; border-radius:7px; background:#172033; color:#cbd5e1; font-size:11px; line-height:1.45; }
+#tts-diagnostic:empty { display:none; }
+#tts-diagnostic[data-status="success"] { color:#86efac; }
+#tts-diagnostic[data-status="failed"], #tts-diagnostic[data-status="warning"] { color:#fcd34d; }

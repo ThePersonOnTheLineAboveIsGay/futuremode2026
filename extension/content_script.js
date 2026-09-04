@@ -94,10 +94,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message: "🤖 AI 提醒：如果你聽到這句話，語音功能運作正常。"
     };
     showInterjection(testMessage);
-    speakInterjection(testMessage.message)
-      .then(() => sendResponse({ ok: true }))
-      .catch((error) => sendResponse({ ok: false, error: error.message }));
-    return true;
+    const result = speakInterjection(testMessage.message);
+    sendResponse(result);
+    return false;
   }
   return false;
 });
@@ -218,33 +217,98 @@ function showInterjection(message) {
 }
 
 function speakInterjection(text) {
-  return new Promise((resolve, reject) => {
-    if (!("speechSynthesis" in window)) {
-      reject(new Error("此瀏覽器不支援 speechSynthesis"));
-      return;
-    }
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "zh-TW";
-    const voices = window.speechSynthesis.getVoices();
-    utterance.voice = voices.find((voice) => /zh[-_](TW|Hant)/i.test(voice.lang))
-      || voices.find((voice) => /^zh/i.test(voice.lang))
-      || null;
-    utterance.onstart = () => debugLog("語音開始播放", { voice: utterance.voice?.name || "系統預設" });
-    utterance.onend = () => {
-      debugLog("語音播放完成");
-      resolve();
-    };
-    utterance.onerror = (event) => {
-      const error = new Error(`語音播放失敗：${event.error || "unknown"}`);
-      console.error("[Meet AI][content]", error);
-      showNotice(error.message);
-      reject(error);
-    };
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.resume();
-    window.speechSynthesis.speak(utterance);
-    debugLog("已將提醒交給瀏覽器語音引擎", { text });
-  });
+  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+    const error = "此 Chrome 環境不支援 Web Speech 語音合成。";
+    publishTtsDiagnostic("failed", error);
+    return { ok: false, error };
+  }
+
+  const synth = window.speechSynthesis;
+  const voices = synth.getVoices();
+  const chineseVoices = voices.filter((voice) => /^zh/i.test(voice.lang));
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "zh-TW";
+  utterance.voice = voices.find((voice) => /zh[-_](TW|Hant)/i.test(voice.lang))
+    || chineseVoices[0]
+    || null;
+
+  let started = false;
+  let finished = false;
+  const environment = {
+    selectedVoice: utterance.voice?.name || "系統預設",
+    chineseVoiceCount: chineseVoices.length,
+    totalVoiceCount: voices.length,
+    pageVisibility: document.visibilityState,
+    userActivation: navigator.userActivation?.hasBeenActive ?? "unknown"
+  };
+
+  utterance.onstart = () => {
+    started = true;
+    publishTtsDiagnostic("playing", `正在播放，語音：${environment.selectedVoice}`, environment);
+    debugLog("語音開始播放", environment);
+  };
+  utterance.onend = () => {
+    finished = true;
+    publishTtsDiagnostic("success", `語音播放完成，語音：${environment.selectedVoice}`, environment);
+    debugLog("語音播放完成");
+  };
+  utterance.onerror = (event) => {
+    finished = true;
+    const reason = explainSpeechError(event.error);
+    publishTtsDiagnostic("failed", reason, { ...environment, browserError: event.error || "unknown" });
+    console.error("[Meet AI][content] 語音播放失敗", { browserError: event.error, reason, environment });
+    showNotice(reason);
+  };
+
+  try {
+    synth.cancel();
+    synth.resume();
+    synth.speak(utterance);
+    publishTtsDiagnostic(
+      "queued",
+      `已交給 Chrome 語音引擎；中文語音 ${chineseVoices.length} 個，使用：${environment.selectedVoice}`,
+      environment
+    );
+    debugLog("已將提醒交給瀏覽器語音引擎", { text, ...environment });
+    setTimeout(() => {
+      if (!started && !finished) {
+        publishTtsDiagnostic(
+          "warning",
+          `4 秒後仍未開始播放。頁面狀態=${environment.pageVisibility}、使用者互動=${environment.userActivation}、中文語音=${environment.chineseVoiceCount} 個；請檢查 Chrome 音量或系統語音引擎。`,
+          environment
+        );
+      }
+    }, 4000);
+    return { ok: true, status: "queued", diagnostic: environment };
+  } catch (error) {
+    const reason = `呼叫 Chrome 語音引擎時發生例外：${error.message}`;
+    publishTtsDiagnostic("failed", reason, environment);
+    return { ok: false, error: reason, diagnostic: environment };
+  }
+}
+
+function explainSpeechError(code) {
+  const reasons = {
+    canceled: "語音被取消：另一段語音或停止動作中斷了播放。",
+    interrupted: "語音被新的朗讀要求中斷。",
+    "audio-busy": "音訊裝置忙碌，Chrome 無法使用目前的輸出裝置。",
+    "audio-hardware": "Chrome 無法使用系統音訊硬體，請檢查輸出裝置。",
+    network: "語音引擎需要網路，但連線失敗。",
+    "synthesis-unavailable": "系統沒有可用的語音合成引擎。",
+    "synthesis-failed": "作業系統語音合成失敗。",
+    "language-unavailable": "系統沒有可用的中文語音。",
+    "voice-unavailable": "選取的系統語音目前無法使用。",
+    "text-too-long": "要朗讀的文字太長。",
+    "invalid-argument": "傳給 Chrome 語音引擎的參數無效。",
+    "not-allowed": "Chrome 阻擋了語音播放；請先在 Meet 頁面點一下，再按測試按鈕。"
+  };
+  return reasons[code] || `Chrome 語音引擎回報錯誤：${code || "unknown"}`;
+}
+
+function publishTtsDiagnostic(status, message, details = {}) {
+  const diagnostic = { status, message, details, timestamp: Date.now() };
+  chrome.storage.local.set({ lastTtsDiagnostic: diagnostic });
+  chrome.runtime.sendMessage({ type: "tts-diagnostic", diagnostic });
 }
 
 function showNotice(text) {
