@@ -8,12 +8,11 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from openai import AsyncOpenAI
 
+from .ai_provider import AIServices, create_ai_services
 from .config import get_settings
-from .contradiction import ContradictionDetector, InterjectionAnalysis
+from .contradiction import InterjectionAnalysis
 from .room_manager import RoomManager
-from .stt import SpeechToText
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("meet-ai-interrupter")
@@ -23,7 +22,7 @@ MEETING_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,127}$", re.IGNORECASE)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.openai = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
+    app.state.ai_services = create_ai_services(settings)
     app.state.rooms = RoomManager(
         window_minutes=settings.conversation_window_minutes,
         max_utterances=settings.conversation_max_utterances,
@@ -33,8 +32,8 @@ async def lifespan(app: FastAPI):
     await app.state.rooms.start()
     yield
     await app.state.rooms.stop()
-    if app.state.openai:
-        await app.state.openai.close()
+    if app.state.ai_services:
+        await app.state.ai_services.close()
 
 
 app = FastAPI(title="Meet AI Interrupter", version="0.2.0", lifespan=lifespan)
@@ -49,7 +48,11 @@ app.add_middleware(
 
 @app.get("/health")
 async def health() -> dict[str, str | bool]:
-    return {"status": "ok", "openai_configured": bool(settings.openai_api_key)}
+    return {
+        "status": "ok",
+        "ai_provider": settings.ai_provider,
+        "ai_configured": settings.ai_configured,
+    }
 
 
 @app.websocket("/ws/meeting")
@@ -63,15 +66,16 @@ async def meeting_socket(websocket: WebSocket) -> None:
 
     rooms: RoomManager = websocket.app.state.rooms
     await rooms.connect(meeting_id, websocket)
-    client: AsyncOpenAI | None = websocket.app.state.openai
-    if client is None:
-        await websocket.send_json({"type": "error", "message": "後端尚未設定 OPENAI_API_KEY"})
+    ai_services: AIServices | None = websocket.app.state.ai_services
+    if ai_services is None:
+        key_name = "OPENAI_API_KEY" if settings.ai_provider == "openai" else "GEMINI_API_KEY"
+        await websocket.send_json({"type": "error", "message": f"後端尚未設定 {key_name}"})
         await websocket.close(code=1011)
         await rooms.disconnect(meeting_id, websocket)
         return
 
-    stt = SpeechToText(client, settings.whisper_model)
-    detector = ContradictionDetector(client, settings.llm_model)
+    stt = ai_services.transcriber
+    detector = ai_services.detector
     mime_type = "audio/webm"
 
     await websocket.send_json({"type": "status", "status": "connected", "meeting_id": meeting_id})

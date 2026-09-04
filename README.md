@@ -2,7 +2,7 @@
 
 SITCON Hackathon 2026「Future of Work」專案。Extension 優先讀取 Google Meet 即時字幕中的講者與文字，後端按會議代碼隔離上下文、偵測同一講者的前後矛盾，再把提醒廣播給同一會議室。提醒同時顯示為 Extension 浮動卡片，並由其中一個 Extension 自動送進 Meet 聊天室，讓沒有安裝 Extension 的與會者也看得到。
 
-第一次安裝請閱讀 [`init.md`](init.md)，裡面包含 Windows、macOS、Linux 的完整指令與疑難排解。
+第一次安裝請先從下方選擇你的作業系統。
 
 ## 資料流程
 
@@ -18,30 +18,47 @@ Meet 字幕 DOM ──講者＋文字──┐
 - 音訊備援模式：沒有講者資訊，因此禁止判定個人前後矛盾，只檢查整體離題及明顯邏輯／數字錯誤。
 - API key 只存在後端 `.env`，不會放進 Extension。
 
-## 快速啟動
+## 選擇你的系統
 
-1. 複製環境變數並填入自己的 API key：
+每份文件都是可以從零開始操作的獨立教學：
 
-   ```powershell
-   Copy-Item .env.example .env
-   ```
+1. [Windows 安裝與啟動教學](docs/setup-windows.md)
+2. [macOS 安裝與啟動教學](docs/setup-macos.md)
+3. [Linux 安裝與啟動教學](docs/setup-linux.md)
 
-2. 啟動後端：
+不確定要選哪一份時，可以先看 [初始化導覽](init.md)。
 
-   ```powershell
-   docker compose up --build
-   ```
+所有系統完成安裝後的會議操作都相同：啟動後端、載入 Extension、加入 Meet、手動開啟字幕，再按 Extension 的「開始監聽」。
 
-3. 開啟 <http://localhost:8000/health>，確認 `status: ok` 與 `openai_configured: true`。
-4. Chrome 開啟 `chrome://extensions`，啟用「開發人員模式」，按「載入未封裝項目」，選擇 `extension/`。
-5. 加入 Google Meet 後，先手動點 Meet 的「顯示字幕／開啟字幕」。這是目前唯一必要的手動步驟。
-6. 點 Extension 圖示，再按「開始監聽」。popup 會顯示會議代碼與目前是「字幕＋講者」或「音訊備援」模式。
+## 選擇 AI 供應商
 
-可先按 popup 的「測試聊天室發送」，它會送出一則清楚標為 `[測試]` 的訊息，用來確認目前 Meet 版本的聊天室 DOM 與帳號權限可用。
+在 `.env` 設定 `AI_PROVIDER=openai` 或 `AI_PROVIDER=gemini`，再填入對應的 API key。供應商由後端統一控制，Extension 不會接觸金鑰。
 
-若沒有偵測到字幕，頁面會顯示提示並自動改用音訊 STT；字幕稍後出現時會停止上傳音訊，切回字幕模式。
+OpenAI：
 
-若後端不是本機，請在 popup 改填 `wss://.../ws/meeting`，並把後端網域加入 `manifest.json` 的 `host_permissions`。
+```ini
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-你的金鑰
+GEMINI_API_KEY=
+```
+
+Gemini：
+
+```ini
+AI_PROVIDER=gemini
+OPENAI_API_KEY=
+GEMINI_API_KEY=你的金鑰
+```
+
+建議不要修改模型設定。專案已針對以下預設值設計與測試：
+
+```ini
+WHISPER_MODEL=gpt-4o-transcribe
+LLM_MODEL=gpt-4o
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+切換 provider 或 key 後必須重新啟動後端。字幕擷取、room、廣播及 Meet UI 不需要修改。
 
 ## 團隊版行為
 

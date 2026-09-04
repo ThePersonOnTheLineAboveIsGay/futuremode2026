@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Literal
 
 from openai import AsyncOpenAI
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 
 from .conversation_buffer import Utterance
@@ -35,41 +37,76 @@ class ContradictionDetector:
         self.model = model
 
     async def analyze(self, history: list[Utterance], latest: Utterance) -> InterjectionAnalysis:
-        history_text = "\n".join(self._format(item) for item in history) or "（尚無歷史紀錄）"
-        has_speaker = bool(latest.speaker)
-        same_speaker = [item for item in history if has_speaker and item.speaker == latest.speaker]
-        same_speaker_text = "\n".join(self._format(item) for item in same_speaker) or "（沒有）"
-        mode = "有講者模式" if has_speaker else "無講者模式（禁止判定 contradiction）"
+        prompt = build_analysis_prompt(history, latest)
         response = await self.client.responses.parse(
             model=self.model,
             input=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": (
-                        f"分析模式：{mode}\n\n完整歷史紀錄：\n{history_text}\n\n"
-                        f"最新講者的同人歷史：\n{same_speaker_text}\n\n最新發言：\n{self._format(latest)}"
-                    ),
+                    "content": prompt,
                 },
             ],
             text_format=InterjectionAnalysis,
         )
         if response.output_parsed is None:
             raise ValueError("模型沒有回傳可解析的判斷結果")
-        result = response.output_parsed
-        if not has_speaker and result.issue_type == "contradiction":
-            return InterjectionAnalysis(
-                has_issue=False,
-                issue_type="none",
-                explanation="無講者資訊，略過個人前後矛盾判斷。",
-                suggested_interjection="",
-                confidence=0,
-                target_speaker=None,
-            )
-        result.target_speaker = latest.speaker if has_speaker and result.has_issue else None
-        return result
+        return normalize_analysis(response.output_parsed, latest)
 
     @staticmethod
     def _format(item: Utterance) -> str:
-        local_time = item.timestamp.astimezone().strftime("%H:%M:%S")
-        return f"[{local_time}] {item.speaker or '未知講者'}：{item.text}"
+        return format_utterance(item)
+
+
+class GeminiContradictionDetector:
+    def __init__(self, client: genai.Client, model: str) -> None:
+        self.client = client
+        self.model = model
+
+    async def analyze(self, history: list[Utterance], latest: Utterance) -> InterjectionAnalysis:
+        response = await self.client.aio.models.generate_content(
+            model=self.model,
+            contents=build_analysis_prompt(history, latest),
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=0.1,
+                response_mime_type="application/json",
+                response_json_schema=InterjectionAnalysis.model_json_schema(),
+            ),
+        )
+        if not response.text:
+            raise ValueError("Gemini 沒有回傳判斷結果")
+        result = InterjectionAnalysis.model_validate_json(response.text)
+        return normalize_analysis(result, latest)
+
+
+def build_analysis_prompt(history: list[Utterance], latest: Utterance) -> str:
+    history_text = "\n".join(format_utterance(item) for item in history) or "（尚無歷史紀錄）"
+    has_speaker = bool(latest.speaker)
+    same_speaker = [item for item in history if has_speaker and item.speaker == latest.speaker]
+    same_speaker_text = "\n".join(format_utterance(item) for item in same_speaker) or "（沒有）"
+    mode = "有講者模式" if has_speaker else "無講者模式（禁止判定 contradiction）"
+    return (
+        f"分析模式：{mode}\n\n完整歷史紀錄：\n{history_text}\n\n"
+        f"最新講者的同人歷史：\n{same_speaker_text}\n\n最新發言：\n{format_utterance(latest)}"
+    )
+
+
+def normalize_analysis(result: InterjectionAnalysis, latest: Utterance) -> InterjectionAnalysis:
+    has_speaker = bool(latest.speaker)
+    if not has_speaker and result.issue_type == "contradiction":
+        return InterjectionAnalysis(
+            has_issue=False,
+            issue_type="none",
+            explanation="無講者資訊，略過個人前後矛盾判斷。",
+            suggested_interjection="",
+            confidence=0,
+            target_speaker=None,
+        )
+    result.target_speaker = latest.speaker if has_speaker and result.has_issue else None
+    return result
+
+
+def format_utterance(item: Utterance) -> str:
+    local_time = item.timestamp.astimezone().strftime("%H:%M:%S")
+    return f"[{local_time}] {item.speaker or '未知講者'}：{item.text}"
