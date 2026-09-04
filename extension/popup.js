@@ -1,7 +1,6 @@
 const statusEl = document.querySelector("#status");
 const errorEl = document.querySelector("#error");
 const urlEl = document.querySelector("#url");
-const roomPasswordEl = document.querySelector("#room-password");
 const displayNameEl = document.querySelector("#display-name");
 const ttsEl = document.querySelector("#tts");
 const modeEl = document.querySelector("#mode");
@@ -19,11 +18,10 @@ chrome.runtime.onMessage.addListener((message) => {
 
 async function init() {
   const saved = await chrome.storage.local.get([
-    "listening", "websocketUrl", "roomPassword", "displayName", "ttsEnabled",
+    "listening", "websocketUrl", "displayName", "ttsEnabled",
     "backendStatus", "captureMode", "meetingId", "lastTtsDiagnostic"
   ]);
   urlEl.value = saved.websocketUrl || urlEl.value;
-  roomPasswordEl.value = saved.roomPassword || "";
   displayNameEl.value = saved.displayName || "";
   ttsEl.checked = Boolean(saved.ttsEnabled);
   setStatus(saved.listening, saved.backendStatus);
@@ -43,7 +41,6 @@ document.querySelector("#start").addEventListener("click", async () => {
     tabId: tab.id,
     websocketUrl: urlEl.value.trim(),
     ttsEnabled: ttsEl.checked,
-    roomPassword: roomPasswordEl.value,
     displayName: displayNameEl.value.trim()
   });
   if (!result?.ok) errorEl.textContent = result?.error || "無法開始監聽";

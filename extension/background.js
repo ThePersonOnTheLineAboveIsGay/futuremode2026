@@ -37,7 +37,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-async function startCapture({ tabId, websocketUrl, ttsEnabled, roomPassword, displayName }) {
+async function startCapture({ tabId, websocketUrl, ttsEnabled, displayName }) {
   const tab = await chrome.tabs.get(tabId);
   const meetingId = meetingIdFromUrl(tab.url);
   if (!meetingId) throw new Error("無法從目前網址取得 Meet 會議代碼");
@@ -51,7 +51,6 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled, roomPassword, dis
     meetingId,
     websocketUrl,
     ttsEnabled,
-    roomPassword,
     displayName: resolvedName
   });
   if (!result?.ok) throw new Error(result?.error || "無法啟動會議監聽");
@@ -59,7 +58,6 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled, roomPassword, dis
     listening: true,
     websocketUrl,
     ttsEnabled,
-    roomPassword,
     displayName: resolvedName,
     meetingId,
     captureMode: "microphone"

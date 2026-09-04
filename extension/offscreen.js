@@ -33,7 +33,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-async function start({ meetingId, websocketUrl, roomPassword, displayName }) {
+async function start({ meetingId, websocketUrl, displayName }) {
   await stop();
   stopping = false;
   activeMeetingId = meetingId;
@@ -52,7 +52,6 @@ async function start({ meetingId, websocketUrl, roomPassword, displayName }) {
     type: "config",
     meeting_id: meetingId,
     mime_type: preferredMimeType(),
-    room_password: roomPassword || "",
     display_name: displayName || ""
   }));
   websocket.addEventListener("message", handleServerMessage);
@@ -191,10 +190,6 @@ function handleServerMessage(event) {
   }
   console.info("[Meet AI][offscreen] 收到後端事件", message);
   chrome.runtime.sendMessage(message);
-  if (message.type === "error" && message.code === "invalid_room_password") {
-    console.warn("[Meet AI][offscreen] 房間密碼錯誤，停止監聽");
-    stop();
-  }
 }
 
 async function stop() {

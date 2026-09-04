@@ -18,7 +18,6 @@ logger = logging.getLogger("meet-ai-interrupter.rooms")
 @dataclass
 class RoomState:
     buffer: ConversationBuffer
-    password: str | None = None
     connections: set[WebSocket] = field(default_factory=set)
     participants: dict[WebSocket, str | None] = field(default_factory=dict)
     chat_sender: WebSocket | None = None
@@ -26,13 +25,6 @@ class RoomState:
     last_analysis_at: float = field(default_factory=lambda: float("-inf"))
     last_chat_by_speaker: dict[str, float] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-
-@dataclass
-class JoinResult:
-    ok: bool
-    is_host: bool
-    reason: str | None = None
 
 
 class RoomManager:
@@ -68,36 +60,28 @@ class RoomManager:
         self,
         meeting_id: str,
         websocket: WebSocket,
-        room_password: str | None,
         display_name: str | None,
-    ) -> JoinResult:
-        clean_password = (room_password or "").strip() or None
+    ) -> bool:
+        """Register a connection into the room; returns True if it created the room."""
         clean_name = (display_name or "").strip() or None
         async with self._rooms_lock:
             room = self.rooms.get(meeting_id)
-            is_host = room is None
+            is_first = room is None
             if room is None:
-                room = RoomState(
-                    ConversationBuffer(self.window_minutes, self.max_utterances),
-                    password=clean_password,
-                )
+                room = RoomState(ConversationBuffer(self.window_minutes, self.max_utterances))
                 self.rooms[meeting_id] = room
-            elif room.password and room.password != clean_password:
-                logger.info("[%s] Join rejected: wrong room password", meeting_id)
-                return JoinResult(ok=False, is_host=False, reason="房間密碼錯誤")
 
             room.connections.add(websocket)
             room.participants[websocket] = clean_name
             room.chat_sender = room.chat_sender or websocket
             room.last_activity = monotonic()
             logger.info(
-                "[%s] Room clients=%d | host=%s | speaker=%s",
+                "[%s] Room clients=%d | speaker=%s",
                 meeting_id,
                 len(room.connections),
-                is_host,
                 clean_name or "unknown",
             )
-            return JoinResult(ok=True, is_host=is_host)
+            return is_first
 
     async def disconnect(self, meeting_id: str, websocket: WebSocket) -> None:
         async with self._rooms_lock:

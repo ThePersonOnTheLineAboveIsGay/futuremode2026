@@ -1,6 +1,6 @@
 # Meet AI 插話員 — 團隊版
 
-SITCON Hackathon 2026「Future of Work」專案。Extension 本身極簡：只負責連到你指定的後端 Server，並直接擷取「你自己」在 Google Meet 通話中的麥克風音訊，交給後端用所選 AI 供應商轉寫成以台灣繁體中文為主的逐字稿；完全不讀取 Google Meet 內建字幕。所有 API key 都只存在後端。後端按會議代碼（房間）隔離上下文，房間可選擇性地設密碼保護，再偵測前後不一致、把提醒廣播給同一會議室。提醒同時顯示為 Extension 浮動卡片，並由其中一個 Extension 自動送進 Meet 聊天室，讓沒有安裝 Extension 的與會者也看得到。
+SITCON Hackathon 2026「Future of Work」專案。Extension 本身極簡：**只需要設定後端 Server 網址**，就會直接擷取「你自己」在 Google Meet 通話中的麥克風音訊，交給後端用所選 AI 供應商轉寫成以台灣繁體中文為主的逐字稿；完全不讀取 Google Meet 內建字幕。所有 AI 供應商、模型、API key 都只存在後端，Extension 完全不接觸。後端按會議代碼（即 Meet 網址那串代碼）隔離上下文成獨立房間，偵測前後不一致後把提醒廣播給同一會議室。提醒同時顯示為 Extension 浮動卡片，並由其中一個 Extension 自動送進 Meet 聊天室，讓沒有安裝 Extension 的與會者也看得到。
 
 **如果同一場會議每個人都裝了這個 Extension**，後端拿到的是每個人各自乾淨的麥克風音軌、而不是分頁混音，因此能準確歸屬到「是誰說的」，插話提醒也能明確指名，而不只是模糊的「會議內容前後不一致」。
 
@@ -9,15 +9,15 @@ SITCON Hackathon 2026「Future of Work」專案。Extension 本身極簡：只�
 ## 資料流程
 
 ```text
-每個人的麥克風 ─ 智慧語音採樣 ─ WebSocket ?meeting_id=... (config: 房間密碼／顯示名稱) ─ AI 中文語音辨識
-                                                                                              │
-                                                                                              ▼
-                                                                                    RoomManager + AI 分析
-                                                                                              ├─ 同房 Extension 浮動卡片／語音
-                                                                                              └─ 指定一個 client 發 Meet 聊天室
+每個人的麥克風 ─ 智慧語音採樣 ─ WebSocket ?meeting_id=... (config: 顯示名稱) ─ AI 中文語音辨識
+                                                                                  │
+                                                                                  ▼
+                                                                            RoomManager + AI 分析
+                                                                                  ├─ 同房 Extension 浮動卡片／語音
+                                                                                  └─ 指定一個 client 發 Meet 聊天室
 ```
 
-- Extension 只需要設定「後端 Server 網址」；房間密碼、顯示名稱都是選填，其餘（AI 供應商、模型、API key）完全由後端決定，Extension 完全不接觸。
+- Extension 只需要設定「後端 Server 網址」，其餘（AI 供應商、模型、API key）完全由後端決定，Extension 完全不接觸。
 - 每個人的 Extension 各自抓自己的麥克風（`getUserMedia`），不再讀取整個分頁混音；第一次啟用會跳出一次 Chrome 麥克風授權。
 - 語音辨識會指定中文 `zh`；後續分析與提醒輸出使用繁體中文、台灣用詞，並保留英文專有名詞、數字與單位。
 - Extension 會偵測聲音開始與停頓，只送出完整語音段落，不再固定每 N 秒硬切。
@@ -67,7 +67,7 @@ OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 
 ## 團隊版行為
 
-### Room 隔離與房間密碼
+### Room 隔離
 
 Extension 從 `https://meet.google.com/xxx-yyyy-zzz` 解析 `xxx-yyyy-zzz`，連到：
 
@@ -75,9 +75,7 @@ Extension 從 `https://meet.google.com/xxx-yyyy-zzz` 解析 `xxx-yyyy-zzz`，連
 ws://localhost:8000/ws/meeting?meeting_id=xxx-yyyy-zzz
 ```
 
-同一個 `meeting_id` **第一個連上的 client 是 host**，可以順便在 Extension 設定一組房間密碼（留空＝不設密碼，任何知道會議代碼的人都能加入，等同舊版行為）。房間存在期間，之後每個人加入都要帶正確密碼，密碼錯誤會被直接拒絕（不會加入 `room.connections`，收不到任何廣播），Extension 也會停止監聽並顯示錯誤。
-
-`RoomManager` 為每個會議代碼保存獨立的 buffer、WebSocket 連線、講者身分、分析節流與聊天室冷卻。同房事件只會送給同房連線；所有連線離開時立即清除 room（連密碼一起清掉），沒有新訊息超過 30 分鐘也會清除並關閉閒置連線。
+`RoomManager` 為每個會議代碼保存獨立的 buffer、WebSocket 連線、講者身分、分析節流與聊天室冷卻。同房事件只會送給同房連線；所有連線離開時立即清除 room，沒有新訊息超過 30 分鐘也會清除並關閉閒置連線。
 
 ### 廣播與聊天室
 
@@ -98,18 +96,11 @@ Extension popup 有一個「整理重點（Debug）」按鈕，會請後端把�
   "type": "config",
   "meeting_id": "xxx-yyyy-zzz",
   "mime_type": "audio/webm;codecs=opus",
-  "room_password": "選填，留空＝不設密碼／不驗證",
   "display_name": "選填，留空會嘗試自動偵測"
 }
 ```
 
-密碼錯誤時後端回傳並關閉連線：
-
-```json
-{ "type": "error", "code": "invalid_room_password", "message": "房間密碼錯誤" }
-```
-
-握手成功後收到 `{"type":"join_ack","meeting_id":"xxx-yyyy-zzz","is_host":true}`。
+握手成功後收到 `{"type":"join_ack","meeting_id":"xxx-yyyy-zzz"}`。
 
 之後 Extension 透過 WebSocket 傳送 `audio/webm;codecs=opus` 語音段落。後端把 AI 逐字稿回傳成 `type: transcript`；`speaker` 是該連線設定的顯示名稱，沒有設定時為 `null`。
 
@@ -205,13 +196,13 @@ WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
 準備兩台筆電，或兩個不同帳號的瀏覽器視窗：
 
 1. 裝置 A 安裝 Extension；裝置 B 不安裝，兩者加入同一個 Meet。
-2. 裝置 A 在 popup 啟動 Extension（第一次會跳出麥克風授權），可以順便設一組房間密碼；如果只有一個裝置裝 Extension，密碼留空即可。不需要開啟 Meet 字幕。
+2. 裝置 A 在 popup 填上 Server 網址、按「開始監聽」（第一次會跳出麥克風授權，請允許）。不需要開啟 Meet 字幕。
 3. 主持人說：「這次專案決定用方案 A，因為成本比較低。」
 4. 等待分析節流時間後說：「所以我們就照方案 B 開始執行吧。」
 5. 裝置 A 應顯示插話浮動卡片；如果 A 有填顯示名稱（或自動偵測成功），卡片會直接指名。
 6. 裝置 B 應在 Meet 聊天室看到 `🤖 AI 提醒：...`，證明未安裝 Extension 也能收到提醒。
 
-如果兩台裝置都裝了 Extension：裝置 A 先啟動並設定房間密碼，裝置 B 要在 popup 填入**同一組密碼**才能加入同一個房間，否則會被拒絕、顯示「房間密碼錯誤」。兩邊都加入後，後端會拿到各自乾淨的麥克風音軌與顯示名稱，插話提醒能明確指名是誰前後矛盾。
+如果兩台裝置都裝了 Extension：兩邊都填同一個 Server 網址、加入同一場 Meet 即可自動進到同一個房間（不需要額外密碼），後端會拿到各自乾淨的麥克風音軌與顯示名稱，插話提醒能明確指名是誰前後矛盾。
 
 舞台 demo 可把 `.env` 的 `ANALYSIS_INTERVAL_SECONDS=5`。另開一場不同代碼的 Meet，可確認兩場逐字稿及提醒不會互相出現。
 
@@ -220,7 +211,7 @@ WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
 重新啟動後端後，PowerShell 會依序顯示以下關鍵訊息：
 
 ```text
-[xxx-yyyy-zzz] Extension connected | host=True
+[xxx-yyyy-zzz] Extension connected | first=True
 [xxx-yyyy-zzz] AI audio chunk received | bytes=... | mime=audio/webm;codecs=opus
 [xxx-yyyy-zzz] Transcript received | source=stt | speaker=小美 | text=...
 [xxx-yyyy-zzz] Sending transcript history to gemini for analysis
@@ -250,15 +241,15 @@ Windows 若看得到卡片但沒有聲音，請先確認目前輸出裝置與音
 - 聊天室必須允許該使用者傳訊息。主持人關閉聊天、帳號政策限制或輸入框尚未載入時，無法自動發送。
 - 偵測到語音段落時會呼叫 OpenRouter STT，成本與網路用量會高於讀取 Meet 字幕；安靜時不會送出辨識。
 - 只有裝了 Extension 的人才有乾淨的個人音軌與講者身分；沒裝的人仍完全依賴聊天室訊息，且他們的發言不會被辨識或分析。
-- 房間密碼是明文存在後端記憶體、由第一個加入的人決定，設計成「防止不相干的人蹭房間」的輕量保護，不是正式帳號驗證機制。
-- 這版 room 狀態（含密碼、講者身分）存在單一 backend process 的記憶體。若水平擴展多個 backend instance，應將 `RoomManager` 換成 Redis pub/sub 與共享狀態。
-- 正式部署前應加入會議參與者同意、TLS、更嚴謹的房間驗證、資料保留政策及速率限制。
+- 房間只靠 `meeting_id`（Meet 網址代碼）隔離，沒有額外驗證；任何知道會議代碼的人都能對後端開連線收到房間廣播，跟 Meet 通話本身的權限管理是分開的兩件事。
+- 這版 room 狀態（含講者身分）存在單一 backend process 的記憶體。若水平擴展多個 backend instance，應將 `RoomManager` 換成 Redis pub/sub 與共享狀態。
+- 正式部署前應加入會議參與者同意、TLS、房間驗證、資料保留政策及速率限制。
 
 ## 專案結構
 
 ```text
-backend/app/main.py                WebSocket 收件、房間握手驗證與分析流程
-backend/app/room_manager.py        Room 狀態（含密碼、講者身分）、分組廣播、冷卻與清理
+backend/app/main.py                WebSocket 收件、房間加入握手與分析流程
+backend/app/room_manager.py        Room 狀態（含講者身分）、分組廣播、冷卻與清理
 backend/app/conversation_buffer.py 逐字稿、講者歷史與去重
 backend/app/contradiction.py       會議內容的結構化矛盾判斷
 backend/app/summary.py             Debug 用的重點整理

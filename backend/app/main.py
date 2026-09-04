@@ -83,22 +83,9 @@ async def meeting_socket(websocket: WebSocket) -> None:
         return
 
     mime_type = str(join_payload.get("mime_type", "audio/webm"))
-    join_result = await rooms.join(
-        meeting_id,
-        websocket,
-        room_password=join_payload.get("room_password"),
-        display_name=join_payload.get("display_name"),
-    )
-    if not join_result.ok:
-        await websocket.send_json({
-            "type": "error",
-            "code": "invalid_room_password",
-            "message": join_result.reason,
-        })
-        await websocket.close(code=4003)
-        return
+    is_first = await rooms.join(meeting_id, websocket, display_name=join_payload.get("display_name"))
 
-    logger.info("[%s] Extension connected | host=%s", meeting_id, join_result.is_host)
+    logger.info("[%s] Extension connected | first=%s", meeting_id, is_first)
     ai_services: AIServices | None = websocket.app.state.ai_services
     if ai_services is None:
         missing = "、".join(settings.missing_api_keys)
@@ -112,11 +99,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
     summarizer = ai_services.summarizer
     stt_context: deque[str] = deque(maxlen=4)
 
-    await websocket.send_json({
-        "type": "join_ack",
-        "meeting_id": meeting_id,
-        "is_host": join_result.is_host,
-    })
+    await websocket.send_json({"type": "join_ack", "meeting_id": meeting_id})
     await websocket.send_json({"type": "status", "status": "connected", "meeting_id": meeting_id})
     try:
         while True:

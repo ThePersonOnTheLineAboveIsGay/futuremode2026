@@ -7,7 +7,7 @@ main { padding: 20px; }
 #status.active { color:#4ade80; }
 #mode { min-height:16px; margin:-12px 0 16px 19px; color:#c4b5fd; font-size:11px; }
 label { display:block; color:#cbd5e1; font-size:12px; margin-bottom:12px; }
-#url, #room-password, #display-name { display:block; box-sizing:border-box; width:100%; margin-top:6px; padding:9px 10px; border:1px solid #334155; border-radius:8px; background:#111827; color:#f8fafc; font-size:12px; }
+#url, #display-name { display:block; box-sizing:border-box; width:100%; margin-top:6px; padding:9px 10px; border:1px solid #334155; border-radius:8px; background:#111827; color:#f8fafc; font-size:12px; }
 .toggle { display:flex; align-items:center; gap:8px; margin:14px 0; }
 .actions { display:flex; gap:8px; }
 button { flex:1; border:0; border-radius:9px; padding:10px; background:#7c3aed; color:white; font-weight:700; cursor:pointer; }
