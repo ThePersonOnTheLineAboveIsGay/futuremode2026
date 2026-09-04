@@ -35,6 +35,7 @@ async def analyze(
     *,
     language: str,
     meeting_context: str = "",
+    already_reported: list[str] | None = None,
     client=None,
 ) -> AnalysisResult:
     """呼叫 Gemini 分析單一逐字稿視窗。純函式，不做過濾。"""
@@ -47,7 +48,7 @@ async def analyze(
     try:
         resp = await client.aio.models.generate_content(
             model=s.gemini_model,
-            contents=build_user_prompt(transcript, meeting_context),
+            contents=build_user_prompt(transcript, meeting_context, already_reported),
             config=types.GenerateContentConfig(
                 system_instruction=build_system_prompt(language),
                 response_mime_type="application/json",
@@ -84,6 +85,7 @@ async def run_if_needed(session: Session, *, client=None) -> list[Assessment] | 
         window,
         language=session.analysis_language,
         meeting_context=session.meeting_context,
+        already_reported=session.reported_topics,
         client=client,
     )
 

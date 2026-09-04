@@ -35,6 +35,9 @@ class Session:
     _last_analysis_time: float = field(default_factory=time.time)
     # topic key -> 已回報過的 verdict
     _reported: dict[str, str] = field(default_factory=dict)
+    # 已回報過「不可行」的原始 topic 文字，餵回 prompt 讓模型自己判斷語意重複
+    # （純字串比對抓不住模型每次措辭略有不同的同一個提案）。
+    reported_topics: list[str] = field(default_factory=list)
 
     def append(self, text: str, speaker: str = "") -> Utterance:
         u = Utterance(text=text.strip(), ts=time.time(), speaker=speaker.strip())
@@ -68,9 +71,11 @@ class Session:
     # ---------- 去重 ----------
 
     def is_new_report(self, topic: str, verdict: str) -> bool:
-        """同一提案、同一 verdict 只回報一次。"""
+        """同一提案、同一 verdict 只回報一次（字面完全相同才擋；語意重複交給 prompt 處理）。"""
         key = _normalize_topic(topic)
         if self._reported.get(key) == verdict:
             return False
         self._reported[key] = verdict
+        if verdict == "infeasible":
+            self.reported_topics.append(topic)
         return True

@@ -18,13 +18,14 @@ SYSTEM_PROMPT = """\
 """
 
 USER_TEMPLATE = """\
-{context_block}以下是最近的會議逐字稿片段（可能不完整、含語音辨識誤差）：
+{context_block}{reported_block}以下是最近的會議逐字稿片段（可能不完整、含語音辨識誤差）：
 
 <逐字稿>
 {transcript}
 </逐字稿>
 
-請找出其中的提案並評估可行性。只回報有意義的項目。
+請找出其中的提案並評估可行性。只回報有意義的項目；
+清單裡已經回報過的提案，除非有新的、實質不同的不可行理由，否則不要重複回報。
 """
 
 
@@ -32,8 +33,12 @@ def build_system_prompt(language: str) -> str:
     return SYSTEM_PROMPT.format(language=language)
 
 
-def build_user_prompt(transcript: str, meeting_context: str = "") -> str:
+def build_user_prompt(transcript: str, meeting_context: str = "", already_reported: list[str] | None = None) -> str:
     context_block = ""
     if meeting_context.strip():
         context_block = f"會議背景：{meeting_context.strip()}\n\n"
-    return USER_TEMPLATE.format(context_block=context_block, transcript=transcript)
+    reported_block = ""
+    if already_reported:
+        items = "\n".join(f"- {t}" for t in already_reported)
+        reported_block = f"以下提案已經回報過「不可行」（同一件事就算措辭不同也算，不要重複回報）：\n{items}\n\n"
+    return USER_TEMPLATE.format(context_block=context_block, reported_block=reported_block, transcript=transcript)
