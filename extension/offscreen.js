@@ -1,6 +1,12 @@
 const VAD_FRAME_MS = 100;
-const START_RMS = 0.012;
-const SILENCE_RMS = 0.006;
+// Mic input gets Chrome's default auto-gain-control, so real speech reliably
+// clears these levels. Tab-captured audio (remote participants' voices as
+// rendered by Meet) gets no such boost and can sit much quieter, so its
+// pipeline uses a noticeably more sensitive pair below.
+const MIC_START_RMS = 0.012;
+const MIC_SILENCE_RMS = 0.006;
+const TAB_START_RMS = 0.003;
+const TAB_SILENCE_RMS = 0.0015;
 const MIN_SEGMENT_MS = 1200;
 // Cut as soon as a natural pause shows someone's done talking, rather than
 // accumulating a fixed-length window — each finished utterance becomes its
@@ -37,7 +43,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-function createPipeline(label, { emitStatus }) {
+function createPipeline(label, { emitStatus, startRms, silenceRms }) {
   let mediaStream = null;
   let audioContext = null;
   let analyser = null;
@@ -45,6 +51,8 @@ function createPipeline(label, { emitStatus }) {
   let websocket = null;
   let recorder = null;
   let vadTimer = null;
+  let peakLogTimer = null;
+  let peakRms = 0;
   let pingTimer = null;
   let reconnectTimer = null;
   let segmentStartedAt = 0;
@@ -148,26 +156,37 @@ function createPipeline(label, { emitStatus }) {
 
   function startVadLoop() {
     if (vadTimer || !analyser || !analyserBuffer) return;
-    log("智慧語音採樣啟動");
+    log("智慧語音採樣啟動", { startRms, silenceRms });
     vadTimer = setInterval(sampleVoiceActivity, VAD_FRAME_MS);
+    peakRms = 0;
+    // Diagnostic only: prints the loudest sample seen every 5s so threshold
+    // tuning (e.g. for tab-mix, which has no mic-style auto-gain) can be
+    // based on real numbers instead of another guess.
+    peakLogTimer = setInterval(() => {
+      log("峰值音量（除錯用）", { peakRms: peakRms.toFixed(4), startRms, silenceRms });
+      peakRms = 0;
+    }, 5000);
   }
 
   function stopVadLoop() {
     clearInterval(vadTimer);
     vadTimer = null;
+    clearInterval(peakLogTimer);
+    peakLogTimer = null;
   }
 
   function sampleVoiceActivity() {
     if (!audioCaptureEnabled || stopping || !analyser || !analyserBuffer) return;
     const rms = currentRms();
+    peakRms = Math.max(peakRms, rms);
     const now = Date.now();
-    if (!recorder && rms >= START_RMS) {
+    if (!recorder && rms >= startRms) {
       startActiveSegment(rms);
       return;
     }
     if (!recorder) return;
 
-    if (rms < SILENCE_RMS) silenceStartedAt ||= now;
+    if (rms < silenceRms) silenceStartedAt ||= now;
     else silenceStartedAt = 0;
 
     const durationMs = now - segmentStartedAt;
@@ -272,8 +291,8 @@ function createPipeline(label, { emitStatus }) {
 // its own connectivity blips don't touch that UI. Both still relay actual
 // content (interjection/summary/etc.); duplicate broadcasts arriving on both
 // connections are merged in relayServerMessage() below.
-const micPipeline = createPipeline("mic", { emitStatus: true });
-const tabPipeline = createPipeline("tab-mix", { emitStatus: false });
+const micPipeline = createPipeline("mic", { emitStatus: true, startRms: MIC_START_RMS, silenceRms: MIC_SILENCE_RMS });
+const tabPipeline = createPipeline("tab-mix", { emitStatus: false, startRms: TAB_START_RMS, silenceRms: TAB_SILENCE_RMS });
 
 function relayServerMessage(message) {
   if (message.type !== "interjection" && message.type !== "summary") {
