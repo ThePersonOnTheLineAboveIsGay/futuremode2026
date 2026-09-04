@@ -4,6 +4,8 @@ const SILENCE_RMS = 0.006;
 const SILENCE_MS = 900;
 const MIN_SEGMENT_MS = 1200;
 const MAX_SEGMENT_MS = 12000;
+const PING_INTERVAL_MS = 25000;
+const RECONNECT_DELAY_MS = 3000;
 let mediaStream = null;
 let audioContext = null;
 let analyser = null;
@@ -11,12 +13,16 @@ let analyserBuffer = null;
 let websocket = null;
 let recorder = null;
 let vadTimer = null;
+let pingTimer = null;
+let reconnectTimer = null;
 let segmentStartedAt = 0;
 let silenceStartedAt = 0;
 let segmentParts = [];
 let stopping = false;
+let shouldReconnect = false;
 let audioCaptureEnabled = false;
 let activeMeetingId = null;
+let connectParams = null;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target !== "offscreen") return false;
@@ -36,6 +42,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function start({ meetingId, websocketUrl, displayName }) {
   await stop();
   stopping = false;
+  shouldReconnect = true;
+  connectParams = { meetingId, websocketUrl, displayName };
   activeMeetingId = meetingId;
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   mediaStream.getAudioTracks()[0]?.addEventListener("ended", () => stop(), { once: true });
@@ -45,9 +53,15 @@ async function start({ meetingId, websocketUrl, displayName }) {
   analyser.fftSize = 2048;
   analyserBuffer = new Float32Array(analyser.fftSize);
   source.connect(analyser);
+  await connectSocket();
+  setAudioCapture(true);
+  chrome.runtime.sendMessage({ type: "status", status: "listening", meeting_id: meetingId });
+}
+
+async function connectSocket() {
+  const { meetingId, websocketUrl, displayName } = connectParams;
   websocket = await connectWebSocket(withMeetingId(websocketUrl, meetingId));
   console.info("[Meet AI][offscreen] WebSocket 已連線", { meetingId, websocketUrl });
-  const connectedMeetingId = meetingId;
   websocket.send(JSON.stringify({
     type: "config",
     meeting_id: meetingId,
@@ -55,11 +69,47 @@ async function start({ meetingId, websocketUrl, displayName }) {
     display_name: displayName || ""
   }));
   websocket.addEventListener("message", handleServerMessage);
-  websocket.addEventListener("close", () => chrome.runtime.sendMessage({
-    type: "status", status: "disconnected", meeting_id: connectedMeetingId
-  }));
-  setAudioCapture(true);
-  chrome.runtime.sendMessage({ type: "status", status: "listening", meeting_id: meetingId });
+  websocket.addEventListener("close", handleSocketClose);
+  startPingLoop();
+}
+
+function handleSocketClose() {
+  stopPingLoop();
+  chrome.runtime.sendMessage({ type: "status", status: "disconnected", meeting_id: activeMeetingId });
+  if (stopping || !shouldReconnect) return;
+  console.warn(`[Meet AI][offscreen] 連線中斷，${RECONNECT_DELAY_MS / 1000} 秒後自動重連`);
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(attemptReconnect, RECONNECT_DELAY_MS);
+}
+
+async function attemptReconnect() {
+  if (stopping || !shouldReconnect) return;
+  try {
+    await connectSocket();
+    console.info("[Meet AI][offscreen] 自動重連成功");
+    chrome.runtime.sendMessage({ type: "status", status: "connected", meeting_id: activeMeetingId });
+  } catch (error) {
+    console.warn("[Meet AI][offscreen] 自動重連失敗，稍後再試", error);
+    if (!stopping && shouldReconnect) {
+      reconnectTimer = setTimeout(attemptReconnect, RECONNECT_DELAY_MS);
+    }
+  }
+}
+
+function startPingLoop() {
+  stopPingLoop();
+  // Keeps the tunnel/proxy from treating a quiet meeting as an idle
+  // connection and dropping it — VAD only sends audio while someone talks.
+  pingTimer = setInterval(() => {
+    if (websocket?.readyState === WebSocket.OPEN) {
+      websocket.send(JSON.stringify({ type: "ping" }));
+    }
+  }, PING_INTERVAL_MS);
+}
+
+function stopPingLoop() {
+  clearInterval(pingTimer);
+  pingTimer = null;
 }
 
 function requestSummary() {
@@ -194,6 +244,10 @@ function handleServerMessage(event) {
 
 async function stop() {
   stopping = true;
+  shouldReconnect = false;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  stopPingLoop();
   audioCaptureEnabled = false;
   stopVadLoop();
   stopActiveSegment(false);
@@ -208,4 +262,5 @@ async function stop() {
   if (audioContext) await audioContext.close();
   audioContext = null;
   activeMeetingId = null;
+  connectParams = null;
 }
