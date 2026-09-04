@@ -34,9 +34,10 @@ async function start({ streamId, meetingId, websocketUrl, ttsEnabled, captionAva
   audioContext = new AudioContext();
   audioContext.createMediaStreamSource(mediaStream).connect(audioContext.destination);
   websocket = await connectWebSocket(withMeetingId(websocketUrl, meetingId));
+  console.info("[Meet AI][offscreen] WebSocket 已連線", { meetingId, websocketUrl });
   const connectedMeetingId = meetingId;
   websocket.send(JSON.stringify({ type: "config", meeting_id: meetingId, mime_type: preferredMimeType() }));
-  websocket.addEventListener("message", (event) => handleServerMessage(event, ttsEnabled));
+  websocket.addEventListener("message", handleServerMessage);
   websocket.addEventListener("close", () => chrome.runtime.sendMessage({
     type: "status", status: "disconnected", meeting_id: connectedMeetingId
   }));
@@ -60,7 +61,11 @@ function connectWebSocket(url) {
 }
 
 function sendCaption(message) {
-  if (message.meeting_id !== activeMeetingId || websocket?.readyState !== WebSocket.OPEN) return;
+  if (message.meeting_id !== activeMeetingId || websocket?.readyState !== WebSocket.OPEN) {
+    console.warn("[Meet AI][offscreen] 字幕未送出：房間不符或 WebSocket 未連線", message);
+    return;
+  }
+  console.info("[Meet AI][offscreen] 傳送字幕", { speaker: message.speaker, text: message.text });
   websocket.send(JSON.stringify({
     type: "caption",
     meeting_id: activeMeetingId,
@@ -72,6 +77,7 @@ function sendCaption(message) {
 
 function setAudioFallback(enabled) {
   audioFallbackEnabled = enabled;
+  console.info(`[Meet AI][offscreen] 音訊備援${enabled ? "啟用" : "停用"}`);
   if (enabled && !stopping && recorder?.state !== "recording") recordStandaloneChunk();
   if (!enabled && recorder?.state === "recording") recorder.stop();
 }
@@ -88,7 +94,9 @@ function recordStandaloneChunk() {
   recorder.addEventListener("dataavailable", (event) => { if (event.data.size) parts.push(event.data); });
   recorder.addEventListener("stop", async () => {
     if (audioFallbackEnabled && parts.length && websocket?.readyState === WebSocket.OPEN) {
-      websocket.send(await new Blob(parts, { type: mimeType }).arrayBuffer());
+      const audio = await new Blob(parts, { type: mimeType }).arrayBuffer();
+      console.info("[Meet AI][offscreen] 傳送音訊備援 chunk", { bytes: audio.byteLength, mimeType });
+      websocket.send(audio);
     }
     recorder = null;
     if (audioFallbackEnabled && !stopping) recordStandaloneChunk();
@@ -97,16 +105,14 @@ function recordStandaloneChunk() {
   chunkTimer = setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, CHUNK_MS);
 }
 
-function handleServerMessage(event, ttsEnabled) {
+function handleServerMessage(event) {
   let message;
-  try { message = JSON.parse(event.data); } catch { return; }
-  chrome.runtime.sendMessage(message);
-  if (message.type === "interjection" && ttsEnabled && "speechSynthesis" in self) {
-    const utterance = new SpeechSynthesisUtterance(message.message);
-    utterance.lang = "zh-TW";
-    speechSynthesis.cancel();
-    speechSynthesis.speak(utterance);
+  try { message = JSON.parse(event.data); } catch {
+    console.warn("[Meet AI][offscreen] 後端回傳了非 JSON 訊息", event.data);
+    return;
   }
+  console.info("[Meet AI][offscreen] 收到後端事件", message);
+  chrome.runtime.sendMessage(message);
 }
 
 async function stop() {

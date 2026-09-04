@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -10,6 +11,8 @@ from typing import Any
 from fastapi import WebSocket
 
 from .conversation_buffer import ConversationBuffer, Utterance
+
+logger = logging.getLogger("meet-ai-interrupter.rooms")
 
 
 @dataclass
@@ -62,6 +65,7 @@ class RoomManager:
             room.connections.add(websocket)
             room.chat_sender = room.chat_sender or websocket
             room.last_activity = monotonic()
+            logger.info("[%s] Room clients=%d", meeting_id, len(room.connections))
             return room
 
     async def disconnect(self, meeting_id: str, websocket: WebSocket) -> None:
@@ -74,6 +78,9 @@ class RoomManager:
                 room.chat_sender = next(iter(room.connections), None)
             if not room.connections:
                 self.rooms.pop(meeting_id, None)
+                logger.info("[%s] Room removed (last client disconnected)", meeting_id)
+            else:
+                logger.info("[%s] Room clients=%d", meeting_id, len(room.connections))
 
     async def add_utterance(
         self,
@@ -119,6 +126,12 @@ class RoomManager:
         connections = list(room.connections)
         chat_sender = room.chat_sender
         stale: list[WebSocket] = []
+        logger.info(
+            "[%s] Broadcasting event to %d client(s); Meet chat sender=%s",
+            meeting_id,
+            len(connections),
+            allow_chat and chat_sender is not None,
+        )
         for connection in connections:
             try:
                 await connection.send_json({
@@ -144,6 +157,8 @@ class RoomManager:
             for connection in list(room.connections):
                 with suppress(Exception):
                     await connection.close(code=1001, reason="Room expired due to inactivity")
+        for meeting_id, _ in expired_rooms:
+            logger.info("[%s] Room removed (idle timeout)", meeting_id)
         return [meeting_id for meeting_id, _ in expired_rooms]
 
     async def _cleanup_loop(self) -> None:

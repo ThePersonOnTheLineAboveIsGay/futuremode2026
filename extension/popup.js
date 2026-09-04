@@ -58,6 +58,21 @@ document.querySelector("#test-chat").addEventListener("click", async () => {
   }
 });
 
+document.querySelector("#test-interjection").addEventListener("click", async () => {
+  errorEl.textContent = "";
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.url?.startsWith("https://meet.google.com/")) {
+    errorEl.textContent = "請先切到 Google Meet 分頁。";
+    return;
+  }
+  try {
+    const result = await chrome.tabs.sendMessage(tab.id, { target: "content", type: "test-interjection" });
+    errorEl.textContent = result?.ok ? "浮動提醒與語音測試完成。" : (result?.error || "語音測試失敗");
+  } catch (error) {
+    errorEl.textContent = `語音測試失敗：${error.message}`;
+  }
+});
+
 function setStatus(listening, backendStatus = "") {
   const labels = { connecting: "正在連線…", connected: "已連線", listening: "正在監聽", analyzing: "AI 分析中…", disconnected: "連線中斷" };
   statusEl.textContent = listening ? (labels[backendStatus] || "正在監聽") : "尚未開始監聽";

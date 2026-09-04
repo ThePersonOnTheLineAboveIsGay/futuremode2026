@@ -67,7 +67,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (message.type === "interjection") {
+    debugLog("收到 AI 插話", message);
     showInterjection(message);
+    chrome.storage.local.get("ttsEnabled").then(({ ttsEnabled }) => {
+      if (ttsEnabled) speakInterjection(message.message);
+      else debugLog("語音未播放：popup 的語音選項未勾選");
+    });
     if (message.send_to_chat) {
       sendMeetChatMessage(message.message).catch((error) => {
         showNotice(`聊天室自動發送失敗：${error.message}。請確認聊天室已允許傳送訊息。`);
@@ -76,6 +81,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "test-chat") {
     sendMeetChatMessage("🤖 AI 提醒：[測試] Meet AI 插話員已連接聊天室。")
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === "test-interjection") {
+    const testMessage = {
+      issue_type: "contradiction",
+      confidence: 0.99,
+      target_speaker: "測試講者",
+      explanation: "這是浮動卡片與語音功能測試。",
+      message: "🤖 AI 提醒：如果你聽到這句話，語音功能運作正常。"
+    };
+    showInterjection(testMessage);
+    speakInterjection(testMessage.message)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
@@ -98,6 +117,7 @@ function startCaptionObserver() {
     attributes: true,
     attributeFilter: ["aria-label", "aria-pressed"]
   });
+  debugLog("字幕 MutationObserver 已啟動", { meetingId });
   scanCaptions();
 }
 
@@ -152,6 +172,7 @@ function queueStableCaption(speaker, text) {
   const state = { text, lastSent: previous?.lastSent || "", timer: null };
   state.timer = setTimeout(() => {
     state.lastSent = state.text;
+    debugLog("擷取字幕並送往後端", { speaker, text: state.text });
     chrome.runtime.sendMessage({
       type: "caption",
       meeting_id: meetingId,
@@ -166,6 +187,7 @@ function queueStableCaption(speaker, text) {
 function updateCaptionStatus(available) {
   if (available === captionAvailable) return;
   captionAvailable = available;
+  debugLog(available ? "已偵測到 Meet 字幕，使用講者模式" : "未偵測到 Meet 字幕，使用音訊備援模式");
   chrome.runtime.sendMessage({ type: "caption-status", meeting_id: meetingId, available });
   if (available) {
     clearTimeout(captionPromptTimer);
@@ -195,12 +217,43 @@ function showInterjection(message) {
   hideTimer = setTimeout(() => card.classList.remove("show"), 12000);
 }
 
+function speakInterjection(text) {
+  return new Promise((resolve, reject) => {
+    if (!("speechSynthesis" in window)) {
+      reject(new Error("此瀏覽器不支援 speechSynthesis"));
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-TW";
+    const voices = window.speechSynthesis.getVoices();
+    utterance.voice = voices.find((voice) => /zh[-_](TW|Hant)/i.test(voice.lang))
+      || voices.find((voice) => /^zh/i.test(voice.lang))
+      || null;
+    utterance.onstart = () => debugLog("語音開始播放", { voice: utterance.voice?.name || "系統預設" });
+    utterance.onend = () => {
+      debugLog("語音播放完成");
+      resolve();
+    };
+    utterance.onerror = (event) => {
+      const error = new Error(`語音播放失敗：${event.error || "unknown"}`);
+      console.error("[Meet AI][content]", error);
+      showNotice(error.message);
+      reject(error);
+    };
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.resume();
+    window.speechSynthesis.speak(utterance);
+    debugLog("已將提醒交給瀏覽器語音引擎", { text });
+  });
+}
+
 function showNotice(text) {
   notice.querySelector("span").textContent = text;
   notice.classList.add("show");
 }
 
 async function sendMeetChatMessage(text) {
+  debugLog("準備發送 Meet 聊天室訊息", { text });
   let input = findChatInput();
   if (!input) {
     const chatButton = findChatOpenButton();
@@ -222,10 +275,12 @@ async function sendMeetChatMessage(text) {
   const sendButton = findSendButton(input);
   if (sendButton && !sendButton.disabled) {
     sendButton.click();
+    debugLog("已點擊 Meet 聊天室傳送按鈕");
     return;
   }
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
   input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+  debugLog("已用 Enter 送出 Meet 聊天室訊息");
 }
 
 function findChatInput() {
@@ -281,4 +336,9 @@ function waitForChatInput(timeoutMs) {
 
 function normalizeText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function debugLog(message, detail) {
+  if (detail === undefined) console.info(`[Meet AI][content] ${message}`);
+  else console.info(`[Meet AI][content] ${message}`, detail);
 }

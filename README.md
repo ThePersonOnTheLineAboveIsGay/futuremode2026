@@ -28,6 +28,8 @@ Meet 字幕 DOM ──講者＋文字──┐
 
 不確定要選哪一份時，可以先看 [初始化導覽](init.md)。
 
+已經安裝過、要取得新版功能時，請按照 [更新教學](update.md) 操作。
+
 所有系統完成安裝後的會議操作都相同：啟動後端、載入 Extension、加入 Meet、手動開啟字幕，再按 Extension 的「開始監聽」。
 
 ## 選擇 AI 供應商
@@ -136,6 +138,32 @@ WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
 6. 裝置 B 應在 Meet 聊天室看到 `🤖 AI 提醒：...`，證明未安裝 Extension 也能收到提醒。
 
 舞台 demo 可把 `.env` 的 `ANALYSIS_INTERVAL_SECONDS=5`。另開一場不同代碼的 Meet，可確認兩場逐字稿及提醒不會互相出現。
+
+## 看 Log 與檢查「為什麼沒插話」
+
+重新啟動後端後，PowerShell 會依序顯示以下關鍵訊息：
+
+```text
+[xxx-yyyy-zzz] Extension connected
+[xxx-yyyy-zzz] Transcript received | source=caption | speaker=王小明 | text=...
+[xxx-yyyy-zzz] Sending transcript history to gemini for analysis
+[xxx-yyyy-zzz] AI result | issue=true | type=contradiction | confidence=0.82 ...
+[xxx-yyyy-zzz] INTERJECTION broadcast | chat=true | message=...
+```
+
+如果看到 `source=stt`，代表 Extension 沒抓到 Meet 字幕，目前在音訊備援模式；請確認 Meet 畫面真的有顯示字幕。`AI result` 若是 `issue=false` 或信心低於 `.env` 的門檻，系統刻意不插話。第一次發言只有建立歷史，也不會立刻判斷矛盾。
+
+Extension 的前端 log：在 Meet 頁面按 `F12` → `Console`，搜尋 `[Meet AI]`。這裡會顯示字幕偵測、字幕送出、插話收到、聊天室送出以及語音播放成功或失敗。
+
+不必等待 AI 就能測試輸出：
+
+1. 到 `chrome://extensions` 重新載入 Extension，再重新整理 Meet 分頁。
+2. 在 Meet 內點 Extension 圖示。
+3. 點「測試浮動提醒＋語音」；應立刻看到卡片並聽到中文測試句。
+4. 點「測試聊天室發送」；應在全體聊天室看到測試訊息。
+5. 測試通過後，勾選「語音唸出提醒」並按「開始監聽」。
+
+Windows 若看得到卡片但沒有聲音，請先確認目前輸出裝置與音量混音器沒有將 Chrome 靜音。測試按鈕仍失敗時，F12 Console 會出現 `語音播放失敗` 與瀏覽器回報的原因。
 
 ## 已知限制
 

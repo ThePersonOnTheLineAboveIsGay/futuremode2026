@@ -14,6 +14,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (message.type === "caption" || message.type === "caption-status") {
+    console.info("[Meet AI][background] 字幕事件", message);
     chrome.runtime.sendMessage({ ...message, target: "offscreen" });
     if (message.type === "caption-status") {
       chrome.storage.local.set({ captureMode: message.available ? "captions" : "audio-fallback" });
@@ -21,6 +22,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (["interjection", "transcript", "status", "error"].includes(message.type)) {
+    console.info("[Meet AI][background] 後端事件", message);
     forwardToMeetingTab(message);
     if (message.type === "status") {
       const disconnected = message.status === "disconnected";
@@ -37,6 +39,7 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled }) {
   if (!meetingId) throw new Error("無法從目前網址取得 Meet 會議代碼");
 
   const captionState = await chrome.tabs.sendMessage(tabId, { target: "content", type: "prepare-captions" });
+  console.info("[Meet AI][background] 開始監聽", { meetingId, websocketUrl, ttsEnabled, captionState });
   await ensureOffscreenDocument();
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
   const result = await chrome.runtime.sendMessage({

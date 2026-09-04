@@ -30,6 +30,13 @@ async def lifespan(app: FastAPI):
         cleanup_interval_seconds=settings.room_cleanup_interval_seconds,
     )
     await app.state.rooms.start()
+    logger.info(
+        "Meet AI backend ready | provider=%s | configured=%s | analysis_interval=%ss | threshold=%.2f",
+        settings.ai_provider,
+        settings.ai_configured,
+        settings.analysis_interval_seconds,
+        settings.interjection_confidence_threshold,
+    )
     yield
     await app.state.rooms.stop()
     if app.state.ai_services:
@@ -66,6 +73,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
 
     rooms: RoomManager = websocket.app.state.rooms
     await rooms.connect(meeting_id, websocket)
+    logger.info("[%s] Extension connected", meeting_id)
     ai_services: AIServices | None = websocket.app.state.ai_services
     if ai_services is None:
         key_name = "OPENAI_API_KEY" if settings.ai_provider == "openai" else "GEMINI_API_KEY"
@@ -92,6 +100,12 @@ async def meeting_socket(websocket: WebSocket) -> None:
 
             if message.get("bytes") is not None:
                 try:
+                    logger.info(
+                        "[%s] Audio fallback chunk received | bytes=%d | mime=%s",
+                        meeting_id,
+                        len(message["bytes"]),
+                        mime_type,
+                    )
                     text = await stt.transcribe(message["bytes"], mime_type)
                 except Exception as exc:
                     logger.exception("Audio transcription failed in room %s", meeting_id)
@@ -108,6 +122,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
                     continue
                 if payload.get("type") == "config":
                     mime_type = str(payload.get("mime_type", mime_type))
+                    logger.info("[%s] Client configured | audio=%s", meeting_id, mime_type)
                     continue
                 if payload.get("type") in {"caption", "transcript"}:
                     text = str(payload.get("text", "")).strip()
@@ -118,7 +133,17 @@ async def meeting_socket(websocket: WebSocket) -> None:
                     continue
 
             if not text:
+                if source == "stt":
+                    logger.info("[%s] Audio chunk contained no speech", meeting_id)
                 continue
+
+            logger.info(
+                "[%s] Transcript received | source=%s | speaker=%s | text=%s",
+                meeting_id,
+                source,
+                speaker or "unknown",
+                text,
+            )
 
             latest, history, analyze_now = await rooms.add_utterance(
                 meeting_id=meeting_id,
@@ -129,6 +154,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
                 analysis_interval_seconds=settings.analysis_interval_seconds,
             )
             if latest is None:
+                logger.info("[%s] Duplicate/empty transcript ignored", meeting_id)
                 continue
 
             await websocket.send_json({
@@ -140,11 +166,26 @@ async def meeting_socket(websocket: WebSocket) -> None:
                 "timestamp": latest.timestamp.timestamp(),
             })
             if not analyze_now:
+                logger.info(
+                    "[%s] Saved transcript; AI analysis skipped (no history or %ss throttle)",
+                    meeting_id,
+                    settings.analysis_interval_seconds,
+                )
                 continue
 
+            logger.info("[%s] Sending transcript history to %s for analysis", meeting_id, settings.ai_provider)
             await websocket.send_json({"type": "status", "status": "analyzing", "meeting_id": meeting_id})
             try:
                 result = await detector.analyze(history, latest)
+                logger.info(
+                    "[%s] AI result | issue=%s | type=%s | confidence=%.2f | target=%s | explanation=%s",
+                    meeting_id,
+                    result.has_issue,
+                    result.issue_type,
+                    result.confidence,
+                    result.target_speaker or "none",
+                    result.explanation or "none",
+                )
                 if should_interject(result, settings.interjection_confidence_threshold):
                     message_text = format_interjection(result.suggested_interjection, result.target_speaker)
                     allow_chat = await rooms.reserve_chat_slot(
@@ -162,6 +203,18 @@ async def meeting_socket(websocket: WebSocket) -> None:
                             "confidence": result.confidence,
                         },
                         allow_chat=allow_chat,
+                    )
+                    logger.info(
+                        "[%s] INTERJECTION broadcast | chat=%s | message=%s",
+                        meeting_id,
+                        allow_chat,
+                        message_text,
+                    )
+                else:
+                    logger.info(
+                        "[%s] No interjection (threshold=%.2f or no clear issue)",
+                        meeting_id,
+                        settings.interjection_confidence_threshold,
                     )
             except Exception as exc:
                 logger.exception("Contradiction analysis failed in room %s", meeting_id)
