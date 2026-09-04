@@ -1,6 +1,6 @@
 // 在 Google Meet 頁面顯示狀態、分析結果與除錯記錄。開始/停止在工具列圖示。
 (() => {
-  const VERSION = "0.10.1";
+  const VERSION = "0.10.2";
   const host = document.createElement("div");
   host.id = "mfa-root";
   document.documentElement.appendChild(host);
@@ -17,6 +17,9 @@
       .dot.on { background: #34d399; }
       .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .toggle { background: none; border: none; color: #9aa4b2; font-size: 15px; padding: 4px 2px; cursor: pointer; flex: none; }
+      .test-chat { background: none; border: 1px solid #3a4257; color: #9aa4b2; font-size: 11px; padding: 3px 8px;
+        border-radius: 6px; cursor: pointer; flex: none; white-space: nowrap; }
+      .test-chat:hover { color: #cbd3e1; border-color: #4b5468; }
       .cards { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
       .card { background: #2b3140; border-left: 3px solid #f87171; border-radius: 8px; padding: 10px 12px; }
       .card h4 { margin: 0 0 6px; font-size: 13px; color: #fca5a5; }
@@ -33,6 +36,7 @@
     <div class="panel">
       <div class="head">
         <span class="left"><span class="dot"></span><span class="title">會議可行性監聽</span></span>
+        <button class="test-chat" title="送一則測試訊息到 Meet 聊天室，驗證有沒有接上">測試聊天室</button>
         <button class="toggle">▾</button>
       </div>
       <div class="msg">點 Chrome 工具列上的 <b>綠色方塊圖示</b> 開始／停止監聽。監聽中時圖示會有綠色 ● 標記。</div>
@@ -70,6 +74,11 @@
 
   shadow.querySelector(".toggle").addEventListener("click", () => panel.classList.toggle("collapsed"));
 
+  shadow.querySelector(".test-chat").addEventListener("click", () => {
+    log("手動測試：嘗試發送測試訊息到 Meet 聊天室…");
+    sendToMeetChat("🤖 AI 提醒：[測試] 會議可行性監聽已接上聊天室。");
+  });
+
   function addAssessment(item) {
     panel.classList.remove("collapsed");
     msgEl.style.display = "none";
@@ -99,52 +108,99 @@
   }
 
   // ---------- 可選：把偵測到的不可行提案自動發到 Meet 聊天室 ----------
-  // 靠抓 DOM 打字＋按 Enter 送出，屬 best-effort，Meet 改版可能失效
+  // 靠抓 DOM 打字＋送出，屬 best-effort，Meet 改版可能失效
   // （跟下面擷取字幕那段用的是同一種「盡力而為」策略）。
   function findChatInput() {
-    return document.querySelector(
-      [
-        '[aria-label="傳送訊息"]',
-        '[aria-label="Send a message"]',
-        'textarea[aria-label*="訊息"]',
-        'textarea[aria-label*="message" i]',
-        '[contenteditable="true"][aria-label*="訊息"]',
-        '[contenteditable="true"][aria-label*="message" i]',
-      ].join(",")
+    const selectors = [
+      'textarea[aria-label*="message" i]',
+      'textarea[placeholder*="message" i]',
+      'textarea[aria-label*="訊息"]',
+      'textarea[placeholder*="訊息"]',
+      '[contenteditable="true"][aria-label*="message" i]',
+      '[contenteditable="true"][aria-label*="訊息"]',
+    ];
+    return document.querySelector(selectors.join(","));
+  }
+
+  function findButtonByLabel(pattern, scope = document) {
+    return Array.from(scope.querySelectorAll('button[aria-label], [role="button"][aria-label]')).find((el) =>
+      pattern.test(el.getAttribute("aria-label") || "")
     );
   }
 
-  function openChatPanel() {
-    if (findChatInput()) return;
-    const btn = document.querySelector('button[aria-label*="聊天"], button[aria-label*="Chat" i]');
-    if (btn) btn.click();
+  function findChatOpenButton() {
+    return Array.from(document.querySelectorAll('button[aria-label], [role="button"][aria-label]')).find((el) => {
+      const label = el.getAttribute("aria-label") || "";
+      return (
+        /chat with everyone|show.*chat|in-call messages|與所有人聊天|開啟.*聊天室|通話中的訊息/i.test(label) &&
+        !/close|hide|關閉|隱藏/i.test(label)
+      );
+    });
+  }
+
+  function findSendButton(input) {
+    let scope = input.parentElement;
+    for (let depth = 0; scope && depth < 6; depth += 1, scope = scope.parentElement) {
+      const btn = findButtonByLabel(/^(send( message)?|傳送(訊息)?|送出)$/i, scope);
+      if (btn) return btn;
+    }
+    return null;
+  }
+
+  function waitForChatInput(timeoutMs) {
+    return new Promise((resolve) => {
+      const existing = findChatInput();
+      if (existing) return resolve(existing);
+      const observer = new MutationObserver(() => {
+        const input = findChatInput();
+        if (input) {
+          observer.disconnect();
+          resolve(input);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      setTimeout(() => {
+        observer.disconnect();
+        resolve(null);
+      }, timeoutMs);
+    });
   }
 
   async function sendToMeetChat(text) {
     try {
-      openChatPanel();
       let input = findChatInput();
-      for (let i = 0; i < 10 && !input; i++) {
-        await new Promise((r) => setTimeout(r, 200));
-        input = findChatInput();
+      if (!input) {
+        const chatButton = findChatOpenButton();
+        if (!chatButton) {
+          log("✗ 找不到 Meet 聊天室按鈕，沒送進聊天室（Meet 改版了？）");
+          return;
+        }
+        chatButton.click();
+        input = await waitForChatInput(3000);
       }
       if (!input) {
         log("✗ 找不到 Meet 聊天輸入框，沒送進聊天室（Meet 改版了？）");
         return;
       }
+
       input.focus();
-      if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
-        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
-        setter.call(input, text);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
+      if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+        setter?.call(input, text);
       } else {
-        document.execCommand("insertText", false, text);
+        input.textContent = text;
       }
-      await new Promise((r) => setTimeout(r, 80));
-      ["keydown", "keyup"].forEach((type) =>
-        input.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }))
-      );
-      log("已發到 Meet 聊天室：" + text.slice(0, 30).replace(/\n/g, " ") + (text.length > 30 ? "…" : ""));
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+
+      const sendButton = findSendButton(input);
+      if (sendButton && !sendButton.disabled) {
+        sendButton.click();
+        log("已按 Meet 聊天室傳送按鈕：" + text.slice(0, 30).replace(/\n/g, " ") + (text.length > 30 ? "…" : ""));
+        return;
+      }
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+      log("已用 Enter 送出 Meet 聊天室訊息：" + text.slice(0, 30).replace(/\n/g, " ") + (text.length > 30 ? "…" : ""));
     } catch (e) {
       log("✗ 發到 Meet 聊天室失敗：" + (e && e.message ? e.message : e));
     }
