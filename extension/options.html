@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { max-width: 460px; margin: 24px auto; padding: 0 16px; font-family: system-ui, sans-serif; }
+      label { display: block; margin: 14px 0 4px; font-size: 13px; font-weight: 600; }
+      input[type="text"], input[type="number"], textarea { width: 100%; padding: 7px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+      .hint { font-size: 12px; color: #666; margin-top: 3px; }
+      .row { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+      button { margin-top: 18px; padding: 9px 18px; border: none; border-radius: 8px; background: #2563eb; color: #fff; font-size: 13px; cursor: pointer; }
+      #saved { margin-left: 10px; color: #16a34a; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h1>設定</h1>
+
+    <label>後端 WebSocket 位址</label>
+    <input type="text" id="backendUrl" placeholder="ws://localhost:8000/ws/new" />
+    <div class="hint">後端 <code>uvicorn</code> 的 WebSocket 端點。</div>
+
+    <label>分析輸出語言</label>
+    <input type="text" id="analysisLanguage" placeholder="zh-TW" />
+
+    <label>信心門檻 (0–1)</label>
+    <input type="number" id="confidenceThreshold" min="0" max="1" step="0.05" />
+    <div class="hint">只有「不可行」且信心 ≥ 此值才會顯示。</div>
+
+    <label>會議背景（可選）</label>
+    <textarea id="meetingContext" rows="3" placeholder="例：討論下一季新功能排程與人力配置"></textarea>
+
+    <div class="row">
+      <input type="checkbox" id="sendCaptions" />
+      <label style="margin: 0;">擷取 Google Meet 字幕做為發言者來源（需在 Meet 開啟字幕）</label>
+    </div>
+
+    <button id="save">儲存</button><span id="saved"></span>
+
+    <script src="common.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

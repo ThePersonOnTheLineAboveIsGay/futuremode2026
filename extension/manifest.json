@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "會議可行性監聽 AI",
+  "description": "在 Google Meet 會議中即時聆聽，偵測到不可行的提案時顯示理由。",
+  "version": "0.6.0",
+  "permissions": ["tabCapture", "offscreen", "storage", "tabs", "activeTab"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://www.youtube.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "會議可行性監聽 AI（點一下開始／停止監聽）",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*", "https://www.youtube.com/*"],
+      "js": ["common.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
