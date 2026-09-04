@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Meet AI 插話員 — 麥克風授權</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: #0b1020; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    main { max-width: 480px; padding: 32px; text-align: center; }
+    h1 { font-size: 20px; margin-bottom: 16px; }
+    #status { font-size: 15px; line-height: 1.6; color: #cbd5e1; }
+    button { margin-top: 20px; border: 0; border-radius: 9px; padding: 10px 20px; background: #7c3aed; color: white; font-weight: 700; cursor: pointer; font-size: 14px; }
+    .hint { margin-top: 24px; color: #94a3b8; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Meet AI 插話員 — 麥克風授權</h1>
+    <p id="status">正在請求麥克風授權…</p>
+    <button id="retry" hidden>重新請求</button>
+    <p class="hint">授權完成後可以關閉這個分頁，回到 Google Meet 按「開始監聽」。</p>
+  </main>
+  <script src="permission.js"></script>
+</body>
+</html>

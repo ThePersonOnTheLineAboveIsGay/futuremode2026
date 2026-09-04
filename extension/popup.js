@@ -31,6 +31,14 @@ async function init() {
 
 document.querySelector("#start").addEventListener("click", async () => {
   errorEl.textContent = "";
+  // Chrome's extension popup cannot reliably show the microphone permission
+  // dialog (it's too small/short-lived), so the first grant has to happen in a
+  // real tab. Here we only ever read the permission state, never request it.
+  if (!(await hasMicrophonePermission())) {
+    chrome.tabs.create({ url: chrome.runtime.getURL("permission.html") });
+    errorEl.textContent = "已開啟麥克風授權分頁，請在該分頁按「允許」，完成後回來再按一次「開始監聽」。";
+    return;
+  }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.url?.startsWith("https://meet.google.com/")) {
     errorEl.textContent = "請先切到 Google Meet 分頁。";
@@ -49,6 +57,15 @@ document.querySelector("#start").addEventListener("click", async () => {
     setMode(result.captureMode, result.meetingId);
   }
 });
+
+async function hasMicrophonePermission() {
+  try {
+    const status = await navigator.permissions.query({ name: "microphone" });
+    return status.state === "granted";
+  } catch {
+    return false;
+  }
+}
 
 document.querySelector("#stop").addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "stop-capture" });
