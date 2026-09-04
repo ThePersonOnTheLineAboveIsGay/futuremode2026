@@ -14,6 +14,17 @@ def test_interjects_only_above_threshold() -> None:
     assert not should_interject(issue, 0.9)
 
 
+def test_decision_review_interjects_like_any_other_issue_type() -> None:
+    issue = InterjectionAnalysis(
+        has_issue=True,
+        issue_type="decision_review",
+        explanation="方案 A 成本較低但交期較長；方案 B 交期短但成本較高",
+        suggested_interjection="要不要先確認交期跟成本哪個對這次比較重要？",
+        confidence=0.8,
+    )
+    assert should_interject(issue, 0.7)
+
+
 def test_none_never_interjects() -> None:
     no_issue = InterjectionAnalysis(
         has_issue=False,

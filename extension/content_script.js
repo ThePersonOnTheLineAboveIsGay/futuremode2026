@@ -98,7 +98,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function showInterjection(message) {
-  const labels = { contradiction: "前後矛盾", off_topic: "可能離題", logical_error: "邏輯錯誤" };
+  const labels = { contradiction: "前後矛盾", off_topic: "可能離題", logical_error: "邏輯錯誤", decision_review: "方案評估" };
   root.querySelector(".badge").textContent = labels[message.issue_type] || "AI 提醒";
   root.querySelector(".confidence").textContent = `${Math.round((message.confidence || 0) * 100)}% 信心`;
   root.querySelector(".target").textContent = message.target_speaker ? `對象：${message.target_speaker}` : "整體會議提醒";

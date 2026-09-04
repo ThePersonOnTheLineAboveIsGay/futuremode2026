@@ -14,18 +14,20 @@ SYSTEM_PROMPT = """你是一個謹慎的會議品質監督 AI。你會收到會�
 1. 與該講者稍早的發言矛盾，且沒有說明改變原因。
 2. 與會議討論主題明顯無關。
 3. 存在可由逐字稿直接驗證的邏輯或數字錯誤。
+4. 提出了具體方案或決定（例如在多個選項之間做選擇）。此時列出逐字稿裡實際出現過的各方案優缺點與風險，幫助團隊確認是否想清楚了；只呈現論點，絕對不要說「A 比較好」或替團隊下結論，是否採納由團隊自己判斷。
 
 當輸入有講者名稱時，只能用「同一位講者」的過往發言判定前後矛盾，絕對不要把不同講者的意見互相比對為矛盾。
 當輸入標示為 AI 音訊模式且沒有講者名稱時，可以指出「會議內容」前後不一致，但不得猜測或指名是哪一位講者；target_speaker 必須為 null。
 避免將正常的意見調整、假設、提問、澄清、補充資訊或語音辨識雜訊誤判為問題。
+第 4 類（方案討論）只在逐字稿裡真的出現具體方案或決定時才觸發，日常閒聊或還沒進入選擇階段時不要觸發；列出的優缺點與風險必須是逐字稿裡實際提到或可直接推論的內容，不可以編造沒提過的資訊，也不可以下「哪個比較好」的結論。
 只有逐字稿內有清楚證據時才標記；不確定就回報無問題。提醒必須簡短、口語、尊重發言者，並指出可核對的前後內容。有講者時，提醒句要明確稱呼該講者。"""
 
 
 class InterjectionAnalysis(BaseModel):
     has_issue: bool
-    issue_type: Literal["contradiction", "off_topic", "logical_error", "none"]
-    explanation: str = Field(max_length=300)
-    suggested_interjection: str = Field(max_length=300)
+    issue_type: Literal["contradiction", "off_topic", "logical_error", "decision_review", "none"]
+    explanation: str = Field(max_length=400)
+    suggested_interjection: str = Field(max_length=400)
     confidence: float = Field(ge=0, le=1)
     target_speaker: str | None = None
 
