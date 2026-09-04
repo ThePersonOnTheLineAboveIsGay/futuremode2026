@@ -1,0 +1,4 @@
+# TLS certs are gitignored (self-signed dev keys only)
+# Generate locally with:
+#   powershell New-SelfSignedCertificate ...
+# Then place cert at infra/certs/server.crt and key at server.key

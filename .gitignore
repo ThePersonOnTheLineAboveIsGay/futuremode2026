@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Runtime data
+data/
+recordings/
+*.pid
+*.seed
+*.pid.lock
+
+# Docker
+.docker-data/
+
+# Misc
+.turbo/
+.cache/
+
+# Downloaded binaries
+infra/livekit/bin/
+infra/livekit/bin-v1.11/
+
+# TLS certificates and keys (self-signed dev only — generate locally)
+infra/certs/*.crt
+infra/certs/*.key
+infra/certs/*.pfx
+!infra/certs/.gitkeep
+!infra/certs/openssl.cnf

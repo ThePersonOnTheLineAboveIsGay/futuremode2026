@@ -1,0 +1,28 @@
+# LiveKit Server configuration (dev with HTTPS for WebRTC)
+# TLS cert paths are passed via --cert-file / --key-file command-line flags.
+# Docs: https://docs.livekit.io/home/self-hosting/config/
+
+port: 7881
+bind_addresses:
+  - ''
+
+rtc:
+  tcp_port: 7882
+  udp_port: 7883
+
+keys:
+  # Dev key. Must match LIVEKIT_API_KEY / LIVEKIT_API_SECRET in .env.
+  devkey: secret-must-be-at-least-32-characters-long-for-jwt
+
+logging:
+  level: info
+  json: true
+
+room:
+  # Allow up to 10 participants per room for MVP.
+  max_participants: 10
+  # Auto-eject empty rooms after 5 minutes.
+  empty_timeout: 300
+
+# Dev only: bind to all interfaces. Production should restrict.
+development: true

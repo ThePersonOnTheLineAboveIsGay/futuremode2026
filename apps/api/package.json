@@ -1,0 +1,37 @@
+{
+  "name": "@futuremode/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fastify backend for room management, token signing, and recordings",
+  "type": "module",
+  "main": "./src/server.ts",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/server.ts",
+    "build": "tsc",
+    "start": "node --env-file=../../.env dist/server.js",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'test:api'"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@fastify/helmet": "^12.0.1",
+    "@fastify/rate-limit": "^10.1.1",
+    "@futuremode/shared": "workspace:*",
+    "fastify": "^5.0.0",
+    "livekit-server-sdk": "^2.8.1",
+    "nanoid": "^5.0.7",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@futuremode/shared": "workspace:*",
+    "@types/node": "^20.14.0",
+    "eslint": "^8.57.1",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4"
+  }
+}

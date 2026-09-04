@@ -1,0 +1,98 @@
+name: futuremode2026
+
+services:
+  livekit:
+    image: livekit/livekit-server:v1.9.8
+    container_name: futuremode-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit/livekit.yaml
+    volumes:
+      - ./infra/livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
+    ports:
+      - '7880:7880' # HTTP signaling + API
+      - '7881:7881' # TCP TURN
+      - '7882:7882/udp' # UDP TURN
+    networks:
+      - futuremode-net
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '--quiet', 'http://localhost:7880/']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  coturn:
+    image: coturn/coturn:4.6
+    container_name: futuremode-coturn
+    restart: unless-stopped
+    volumes:
+      - ./infra/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports:
+      - '3478:3478' # TURN/STUN
+      - '3478:3478/udp' # TURN/STUN
+      - '49152-49200:49152-49200/udp' # Relay media
+    networks:
+      - futuremode-net
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: futuremode-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - API_PORT=3001
+      - API_HOST=0.0.0.0
+      - LIVEKIT_URL=ws://livekit:7880
+      # LIVEKIT_PUBLIC_URL 留空表示用內部 URL（同 docker 網路內可用）
+      # 對外服務時必須設定為外部可達的 URL
+    ports:
+      - '3001:3001'
+    depends_on:
+      livekit:
+        condition: service_healthy
+    networks:
+      - futuremode-net
+
+  ai-bot:
+    build:
+      context: .
+      dockerfile: services/ai-bot/Dockerfile
+    container_name: futuremode-ai-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - LIVEKIT_URL=ws://livekit:7880
+    depends_on:
+      livekit:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - futuremode-net
+    deploy:
+      replicas: 1 # MVP: single instance with internal per-room workers
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: futuremode-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+      - NEXT_PUBLIC_LIVEKIT_URL=ws://localhost:7880
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+    networks:
+      - futuremode-net
+
+networks:
+  futuremode-net:
+    driver: bridge

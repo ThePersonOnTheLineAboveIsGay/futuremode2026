@@ -1,0 +1,42 @@
+{
+  "name": "@futuremode/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Next.js 14 frontend for the meeting app",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -H 0.0.0.0 --experimental-https --experimental-https-key ../../infra/certs/server.key --experimental-https-cert ../../infra/certs/server.crt",
+    "dev:http": "next dev -H 0.0.0.0",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'test:web'"
+  },
+  "dependencies": {
+    "@futuremode/shared": "workspace:*",
+    "livekit-client": "^2.5.7",
+    "next": "^14.2.15",
+    "next-intl": "^3.20.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.4",
+    "lucide-react": "^0.451.0",
+    "class-variance-authority": "^0.7.0"
+  },
+  "devDependencies": {
+    "@futuremode/shared": "workspace:*",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.5.12",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.15",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.5.4"
+  }
+}

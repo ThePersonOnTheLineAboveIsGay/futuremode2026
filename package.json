@@ -1,0 +1,36 @@
+{
+  "name": "futuremode2026",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Google Meet 風格 + 即時 AI 助手會議系統",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter=./apps/* --filter=./services/* run dev",
+    "dev:web": "pnpm --filter @futuremode/web dev",
+    "dev:api": "pnpm --filter @futuremode/api dev",
+    "dev:ai-bot": "pnpm --filter @futuremode/ai-bot dev",
+    "build": "pnpm -r --filter=./packages/* --filter=./apps/* --filter=./services/* run build",
+    "build:shared": "pnpm --filter @futuremode/shared build",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yaml,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yaml,yml}\"",
+    "clean": "pnpm -r exec rm -rf dist .next node_modules/.cache",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "docker:reset": "docker compose down -v && docker compose up -d"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.3"
+  }
+}

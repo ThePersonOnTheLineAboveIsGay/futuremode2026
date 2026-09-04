@@ -1,0 +1,37 @@
+{
+  "app": {
+    "title": "futuremode2026",
+    "description": "Google Meet 風格 + 即時 AI 助手會議系統"
+  },
+  "home": {
+    "title": "futuremode2026",
+    "subtitle": "Google Meet 風格 + 即時 AI 助手會議系統",
+    "status": "目前狀態：Phase 0 — Repo skeleton",
+    "createRoom": "創建新會議",
+    "joinRoom": "加入會議",
+    "roomCodePlaceholder": "輸入 6 字元會議代碼",
+    "displayNamePlaceholder": "你的名稱"
+  },
+  "room": {
+    "loading": "正在連線...",
+    "mic": "麥克風",
+    "camera": "攝影機",
+    "leave": "離開會議",
+    "transcript": "即時逐字稿",
+    "aiListening": "AI 正在聆聽...",
+    "aiThinking": "AI 正在思考...",
+    "aiSpeaking": "AI 正在發言",
+    "persona": "AI 人格",
+    "settings": "設定"
+  },
+  "persona": {
+    "critic": "嚴謹評審",
+    "coach": "教練",
+    "consultant": "顧問"
+  },
+  "errors": {
+    "roomNotFound": "找不到會議",
+    "roomFull": "會議已滿（上限 10 人）",
+    "connectionLost": "連線中斷，嘗試重新連線..."
+  }
+}

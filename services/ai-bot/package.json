@@ -1,0 +1,37 @@
+{
+  "name": "@futuremode/ai-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI bot worker: subscribes to LiveKit audio, runs STT/LLM/TTS pipeline",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/index.ts",
+    "build": "tsc",
+    "start": "node --env-file=../../.env dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@futuremode/shared": "workspace:*",
+    "@livekit/rtc-node": "^0.13.34",
+    "livekit-server-sdk": "^2.8.1",
+    "openai": "^4.67.3",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@futuremode/shared": "workspace:*",
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.12",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.3"
+  }
+}
