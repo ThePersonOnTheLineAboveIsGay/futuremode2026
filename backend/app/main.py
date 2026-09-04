@@ -68,12 +68,23 @@ async def health() -> dict[str, str | bool]:
     }
 
 
+async def safe_send_json(websocket: WebSocket, payload: dict) -> None:
+    """Best-effort send. Receiving and processing are decoupled (see
+    meeting_socket), so a reply can finish computing after its connection has
+    already closed — that's expected, not an error, so it's swallowed here
+    instead of crashing the handler."""
+    try:
+        await websocket.send_json(payload)
+    except Exception:
+        logger.debug("[%s] Dropped send to a closed connection", payload.get("meeting_id"))
+
+
 @app.websocket("/ws/meeting")
 async def meeting_socket(websocket: WebSocket) -> None:
     meeting_id = websocket.query_params.get("meeting_id", "").strip().lower()
     await websocket.accept()
     if not MEETING_ID_PATTERN.fullmatch(meeting_id):
-        await websocket.send_json({"type": "error", "message": "meeting_id 格式不正確"})
+        await safe_send_json(websocket, {"type": "error", "message": "meeting_id 格式不正確"})
         await websocket.close(code=1008)
         return
 
@@ -90,7 +101,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
     ai_services: AIServices | None = websocket.app.state.ai_services
     if ai_services is None:
         missing = "、".join(settings.missing_api_keys)
-        await websocket.send_json({"type": "error", "message": f"後端尚未設定：{missing}"})
+        await safe_send_json(websocket, {"type": "error", "message": f"後端尚未設定：{missing}"})
         await websocket.close(code=1011)
         await rooms.disconnect(meeting_id, websocket)
         return
@@ -100,8 +111,8 @@ async def meeting_socket(websocket: WebSocket) -> None:
     summarizer = ai_services.summarizer
     stt_context: deque[str] = deque(maxlen=4)
 
-    await websocket.send_json({"type": "join_ack", "meeting_id": meeting_id})
-    await websocket.send_json({"type": "status", "status": "connected", "meeting_id": meeting_id})
+    await safe_send_json(websocket, {"type": "join_ack", "meeting_id": meeting_id})
+    await safe_send_json(websocket, {"type": "status", "status": "connected", "meeting_id": meeting_id})
 
     async def process_message(message: dict) -> None:
         nonlocal mime_type
@@ -122,16 +133,16 @@ async def meeting_socket(websocket: WebSocket) -> None:
                 speaker = rooms.participant_name(meeting_id, websocket)
             except Exception as exc:
                 logger.exception("Audio transcription failed in room %s", meeting_id)
-                await websocket.send_json({"type": "error", "message": f"語音辨識失敗：{exc}"})
+                await safe_send_json(websocket, {"type": "error", "message": f"語音辨識失敗：{exc}"})
                 return
         elif message.get("text") is not None:
             try:
                 payload = json.loads(message["text"])
             except json.JSONDecodeError:
-                await websocket.send_json({"type": "error", "message": "訊息必須是 JSON"})
+                await safe_send_json(websocket, {"type": "error", "message": "訊息必須是 JSON"})
                 return
             if payload.get("meeting_id") not in (None, meeting_id):
-                await websocket.send_json({"type": "error", "message": "訊息 meeting_id 與連線房間不符"})
+                await safe_send_json(websocket, {"type": "error", "message": "訊息 meeting_id 與連線房間不符"})
                 return
             if payload.get("type") == "config":
                 mime_type = str(payload.get("mime_type", mime_type))
@@ -176,7 +187,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
             logger.info("[%s] Duplicate/empty transcript ignored", meeting_id)
             return
 
-        await websocket.send_json({
+        await safe_send_json(websocket, {
             "type": "transcript",
             "meeting_id": meeting_id,
             "speaker": latest.speaker,
@@ -193,7 +204,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
             return
 
         logger.info("[%s] Sending transcript history to %s for analysis", meeting_id, settings.ai_provider)
-        await websocket.send_json({"type": "status", "status": "analyzing", "meeting_id": meeting_id})
+        await safe_send_json(websocket, {"type": "status", "status": "analyzing", "meeting_id": meeting_id})
         try:
             result = await detector.analyze(history, latest)
             logger.info(
@@ -237,9 +248,9 @@ async def meeting_socket(websocket: WebSocket) -> None:
                 )
         except Exception as exc:
             logger.exception("Contradiction analysis failed in room %s", meeting_id)
-            await websocket.send_json({"type": "error", "message": f"內容分析失敗：{exc}"})
+            await safe_send_json(websocket, {"type": "error", "message": f"內容分析失敗：{exc}"})
         finally:
-            await websocket.send_json({"type": "status", "status": "listening", "meeting_id": meeting_id})
+            await safe_send_json(websocket, {"type": "status", "status": "listening", "meeting_id": meeting_id})
 
     # Receiving off the socket and processing each message (STT + AI calls)
     # are split into two tasks sharing a FIFO queue. A slow transcription or
@@ -277,18 +288,18 @@ async def receive_join_payload(websocket: WebSocket, meeting_id: str) -> dict | 
     """Read the first client message; it must be a `config` join handshake."""
     message = await websocket.receive()
     if message["type"] == "websocket.disconnect" or message.get("text") is None:
-        await websocket.send_json({"type": "error", "message": "第一則訊息必須是 config 加入請求"})
+        await safe_send_json(websocket, {"type": "error", "message": "第一則訊息必須是 config 加入請求"})
         return None
     try:
         payload = json.loads(message["text"])
     except json.JSONDecodeError:
-        await websocket.send_json({"type": "error", "message": "訊息必須是 JSON"})
+        await safe_send_json(websocket, {"type": "error", "message": "訊息必須是 JSON"})
         return None
     if payload.get("type") != "config":
-        await websocket.send_json({"type": "error", "message": "第一則訊息必須是 config 加入請求"})
+        await safe_send_json(websocket, {"type": "error", "message": "第一則訊息必須是 config 加入請求"})
         return None
     if payload.get("meeting_id") not in (None, meeting_id):
-        await websocket.send_json({"type": "error", "message": "訊息 meeting_id 與連線房間不符"})
+        await safe_send_json(websocket, {"type": "error", "message": "訊息 meeting_id 與連線房間不符"})
         return None
     return payload
 
@@ -309,7 +320,7 @@ async def handle_summarize(
     history = rooms.snapshot_history(meeting_id)
     logger.info("[%s] Summarize requested | utterances=%d", meeting_id, len(history))
     if not history:
-        await websocket.send_json({
+        await safe_send_json(websocket, {
             "type": "summary",
             "meeting_id": meeting_id,
             "text": "目前還沒有逐字稿可以整理重點，先說幾句話再試一次。",
@@ -319,7 +330,7 @@ async def handle_summarize(
         text = await summarizer.summarize(history)
     except Exception as exc:
         logger.exception("Summary failed in room %s", meeting_id)
-        await websocket.send_json({
+        await safe_send_json(websocket, {
             "type": "summary",
             "meeting_id": meeting_id,
             "text": f"整理重點失敗（目前逐字稿共 {len(history)} 句）：{exc}",
@@ -327,7 +338,7 @@ async def handle_summarize(
         return
     summary = text.strip() or "（摘要服務沒有回傳文字）"
     logger.info("[%s] Summary sent to requester | utterances=%d", meeting_id, len(history))
-    await websocket.send_json({
+    await safe_send_json(websocket, {
         "type": "summary",
         "meeting_id": meeting_id,
         "text": summary,
