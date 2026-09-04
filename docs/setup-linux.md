@@ -203,7 +203,7 @@ sudo apt install python3-venv
 - 優先使用最新版正式版 Google Chrome。
 - 確認網站音訊沒有被瀏覽器或桌面環境靜音。
 - Wayland／PipeWire 環境若有問題，可先確認瀏覽器本身能正常播放 Meet 音訊。
-- 系統固定上傳 6 秒音訊片段給所選 AI 供應商；音訊擷取或網路問題會直接影響辨識。
+- 系統偵測到語音段落後才會上傳音訊給 OpenRouter STT；音訊擷取、偵測門檻或網路問題會直接影響辨識。
 
 ### 後端或 Extension 連不上
 

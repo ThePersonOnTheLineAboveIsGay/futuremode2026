@@ -24,10 +24,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Continuously record microphone audio and print OpenRouter Whisper transcriptions."
     )
-    parser.add_argument("--seconds", type=float, default=6.0, help="Seconds per recognition chunk.")
     parser.add_argument("--device", type=int, default=None, help="Input device index from --list-devices.")
     parser.add_argument("--list-devices", action="store_true", help="List audio devices and exit.")
-    parser.add_argument("--silence-rms", type=float, default=0.004, help="RMS below this value is treated as silence.")
+    parser.add_argument("--start-rms", type=float, default=0.012, help="RMS required to start a speech segment.")
+    parser.add_argument("--silence-rms", type=float, default=0.006, help="RMS below this value is treated as silence.")
+    parser.add_argument("--silence-ms", type=int, default=900, help="Silence duration that ends a speech segment.")
+    parser.add_argument("--min-ms", type=int, default=1200, help="Minimum speech segment duration to transcribe.")
+    parser.add_argument("--max-ms", type=int, default=12000, help="Maximum speech segment duration before forced transcription.")
     return parser.parse_args()
 
 
@@ -55,24 +58,49 @@ def audio_rms(pcm_audio: bytes) -> float:
     return math.sqrt(sum(sample * sample for sample in samples) / len(samples)) / 32768.0
 
 
-def record_chunk(seconds: float, device: int | None) -> bytes:
-    frames = int(seconds * SAMPLE_RATE)
+def frame_duration_ms(frame_bytes: int) -> float:
+    return frame_bytes / (SAMPLE_RATE * CHANNELS * 2) * 1000
+
+
+def record_speech_segment(args: argparse.Namespace) -> tuple[bytes, float, float, str]:
+    frame_ms = 100
+    frame_size = int(SAMPLE_RATE * frame_ms / 1000)
     with sd.RawInputStream(
-        device=device,
+        device=args.device,
         samplerate=SAMPLE_RATE,
         channels=CHANNELS,
         dtype="int16",
     ) as stream:
-        chunks: list[bytes] = []
-        remaining = frames
-        while remaining > 0:
-            read_frames = min(remaining, 1024)
-            data, overflowed = stream.read(read_frames)
+        print("waiting for speech...", flush=True)
+        while True:
+            data, overflowed = stream.read(frame_size)
             if overflowed:
-                print("WARN: audio input overflowed; this chunk may be incomplete.", file=sys.stderr)
-            chunks.append(bytes(data))
-            remaining -= read_frames
-    return b"".join(chunks)
+                print("WARN: audio input overflowed while waiting.", file=sys.stderr)
+            frame = bytes(data)
+            rms = audio_rms(frame)
+            if rms >= args.start_rms:
+                break
+
+        chunks = [frame]
+        peak_rms = rms
+        total_ms = frame_duration_ms(len(frame))
+        silence_ms = 0.0
+
+        while True:
+            data, overflowed = stream.read(frame_size)
+            if overflowed:
+                print("WARN: audio input overflowed; this segment may be incomplete.", file=sys.stderr)
+            frame = bytes(data)
+            rms = audio_rms(frame)
+            peak_rms = max(peak_rms, rms)
+            chunks.append(frame)
+            total_ms += frame_duration_ms(len(frame))
+            silence_ms = silence_ms + frame_ms if rms < args.silence_rms else 0.0
+
+            if total_ms >= args.max_ms:
+                return b"".join(chunks), total_ms / 1000, peak_rms, "max-duration"
+            if total_ms >= args.min_ms and silence_ms >= args.silence_ms:
+                return b"".join(chunks), total_ms / 1000, peak_rms, "silence"
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -93,24 +121,31 @@ async def run(args: argparse.Namespace) -> int:
     context: list[str] = []
 
     print("testvoice started. Press Ctrl+C to stop.")
-    print(f"chunk={args.seconds:.1f}s sample_rate={SAMPLE_RATE}Hz device={args.device or 'default'}")
-    print("Speak Mandarin/Taiwan Chinese near the microphone. Each chunk prints RMS and transcript.")
-    if args.seconds < 3:
-        print("WARN: 中文語音不建議低於 3 秒切片；1 秒常只有半個詞或半句，容易空白或誤判。")
+    print(f"mode=smart-vad sample_rate={SAMPLE_RATE}Hz device={args.device or 'default'}")
+    print(
+        "Speak Mandarin/Taiwan Chinese near the microphone. "
+        "Recording starts on voice and transcribes after a pause."
+    )
+    print(
+        f"vad start_rms={args.start_rms:.5f} silence_rms={args.silence_rms:.5f} "
+        f"silence_ms={args.silence_ms} min_ms={args.min_ms} max_ms={args.max_ms}"
+    )
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(90.0), headers=headers) as client:
         transcriber = OpenRouterSpeechToText(client)
-        chunk_no = 1
+        segment_no = 1
         while True:
             started_at = time.strftime("%H:%M:%S")
-            print(f"\n[{started_at}] chunk #{chunk_no}: recording...")
-            pcm_audio = record_chunk(args.seconds, args.device)
-            rms = audio_rms(pcm_audio)
-            print(f"[{time.strftime('%H:%M:%S')}] chunk #{chunk_no}: rms={rms:.5f}")
+            print(f"\n[{started_at}] segment #{segment_no}: listening...")
+            pcm_audio, duration, peak_rms, reason = record_speech_segment(args)
+            print(
+                f"[{time.strftime('%H:%M:%S')}] segment #{segment_no}: "
+                f"duration={duration:.1f}s peak_rms={peak_rms:.5f} end={reason}"
+            )
 
-            if rms < args.silence_rms:
-                print("result: (silence / 麥克風音量太小，未送出辨識)")
-                chunk_no += 1
+            if duration * 1000 < args.min_ms:
+                print("result: (too short / 語音段落太短，未送出辨識)")
+                segment_no += 1
                 continue
 
             try:
@@ -120,7 +155,7 @@ async def run(args: argparse.Namespace) -> int:
                 raise
             except Exception as exc:
                 print(f"ERROR: STT failed: {exc}", file=sys.stderr)
-                chunk_no += 1
+                segment_no += 1
                 continue
 
             if transcript:
@@ -128,7 +163,7 @@ async def run(args: argparse.Namespace) -> int:
                 context.append(transcript)
             else:
                 print("result: (OpenRouter 回傳空字串，通常是音量太小、背景噪音、或該段沒有人聲)")
-            chunk_no += 1
+            segment_no += 1
 
 
 def main() -> int:

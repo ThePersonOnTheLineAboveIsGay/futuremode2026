@@ -135,7 +135,7 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 6. 按「測試聊天室發送」。
 7. Meet 聊天室應出現 `🤖 AI 提醒：[測試] Meet AI 插話員已連接聊天室。`
 
-開始後約每 6 秒送出一個音訊片段，PowerShell 應出現 `AI audio chunk received` 與 `source=stt`。
+開始後請對著 Meet 說一句完整中文；停頓後 PowerShell 應出現 `AI audio chunk received` 與 `source=stt`。系統使用智慧語音採樣，安靜時不會固定送出音訊。
 
 ## 7. Demo 建議設定
 

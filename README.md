@@ -7,7 +7,7 @@ SITCON Hackathon 2026「Future of Work」專案。Extension 直接擷取 Google 
 ## 資料流程
 
 ```text
-Meet 分頁音訊 ─ 6 秒 chunk ─ WebSocket ?meeting_id=... ─ AI 中文語音辨識
+Meet 分頁音訊 ─ 智慧語音採樣 ─ WebSocket ?meeting_id=... ─ AI 中文語音辨識
                                                                │
                                                                ▼
                                                           RoomManager + AI 分析
@@ -15,7 +15,8 @@ Meet 分頁音訊 ─ 6 秒 chunk ─ WebSocket ?meeting_id=... ─ AI 中文語
                                                                └─ 指定一個 client 發 Meet 聊天室
 ```
 
-- 中文辨識提示會要求繁體中文、台灣用詞，並保留英文專有名詞、數字與單位。
+- 語音辨識會指定中文 `zh`；後續分析與提醒輸出使用繁體中文、台灣用詞，並保留英文專有名詞、數字與單位。
+- Extension 會偵測聲音開始與停頓，只送出完整語音段落，不再固定每 N 秒硬切。
 - 每段辨識會帶入最近四段逐字稿作為銜接上下文，降低中文斷詞和專有名詞漂移。
 - 音訊沒有可靠講者姓名，因此只提醒「會議內容前後不一致」，不會猜測或指名發言者。
 - API key 只存在後端 `.env`，不會放進 Extension。
@@ -80,7 +81,7 @@ ws://localhost:8000/ws/meeting?meeting_id=xxx-yyyy-zzz
 
 ## WebSocket 訊息
 
-Extension 會透過 WebSocket 傳送 `audio/webm;codecs=opus` binary chunk。後端把 AI 逐字稿回傳成 `type: transcript`，speaker 為 `null`。
+Extension 會透過 WebSocket 傳送 `audio/webm;codecs=opus` 語音段落。後端把 AI 逐字稿回傳成 `type: transcript`，speaker 為 `null`。
 
 插話事件：
 
@@ -129,9 +130,7 @@ pip install -r backend\requirements.txt
 python backend/testvoice.py
 ```
 
-它會每 6 秒錄一段麥克風音訊，送到 `openai/whisper-large-v3`，然後即時印出 RMS 音量與辨識文字。RMS 很低代表程式幾乎沒收到你的聲音。
-
-中文測試不建議使用 `--seconds 1`。1 秒常只錄到半個詞或半句，Whisper 會回傳空字串或誤判；建議先用預設 6 秒，穩定後再降到 3 秒。
+它會等待你開始說話，停頓後才把完整語音段落送到 `openai/whisper-large-v3`，然後即時印出段落長度、峰值 RMS 音量與辨識文字。RMS 很低代表程式幾乎沒收到你的聲音。
 
 列出麥克風裝置：
 
@@ -145,10 +144,10 @@ python backend/testvoice.py --list-devices
 python backend/testvoice.py --device 1
 ```
 
-縮短或拉長每段辨識時間：
+調整語音偵測門檻：
 
 ```powershell
-python backend/testvoice.py --seconds 3
+python backend/testvoice.py --start-rms 0.01 --silence-rms 0.005 --silence-ms 800
 ```
 
 WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
@@ -187,7 +186,7 @@ WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
 
 正常情況就會顯示 `source=stt`，代表逐字稿由 AI 從音訊產生。`AI result` 若是 `issue=false` 或信心低於 `.env` 的門檻，系統刻意不插話。第一段發言只有建立歷史，也不會立刻判斷矛盾。
 
-Extension 的前端 log：在 Meet 頁面按 `F12` → `Console`，搜尋 `[Meet AI]`。這裡會顯示音訊 chunk、插話收到、聊天室送出以及語音播放成功或失敗。
+Extension 的前端 log：在 Meet 頁面按 `F12` → `Console`，搜尋 `[Meet AI]`。這裡會顯示智慧採樣啟動、語音段落送出、插話收到、聊天室送出以及語音播放成功或失敗。
 
 不必等待 AI 就能測試輸出：
 
@@ -203,7 +202,7 @@ Windows 若看得到卡片但沒有聲音，請先確認目前輸出裝置與音
 
 - 專案不使用 Meet 字幕 DOM；聊天室自動發送仍依賴 Meet UI，因此 Meet 改版後可能需要調整 `content_script.js`。
 - 聊天室必須允許該使用者傳訊息。主持人關閉聊天、帳號政策限制或輸入框尚未載入時，無法自動發送。
-- 每 6 秒音訊會呼叫一次所選 AI 供應商，成本與網路用量會高於讀取 Meet 字幕。
+- 偵測到語音段落時會呼叫 OpenRouter STT，成本與網路用量會高於讀取 Meet 字幕；安靜時不會送出辨識。
 - 混合音訊無法可靠對應 Meet 顯示名稱；若未來需要指名講者，必須另外導入模型 diarization 與身分對照流程。
 - 這版 room 狀態存在單一 backend process 的記憶體。若水平擴展多個 backend instance，應將 `RoomManager` 換成 Redis pub/sub 與共享狀態。
 - 正式部署前應加入會議參與者同意、TLS、WebSocket 驗證、資料保留政策及速率限制。

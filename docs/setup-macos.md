@@ -126,7 +126,7 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 5. 確認顯示「AI 中文音訊辨識模式」。
 6. 按「測試聊天室發送」，確認聊天室出現 `[測試]` 訊息。
 
-開始後約每 6 秒送出一個音訊片段，終端機應出現 `AI audio chunk received` 與 `source=stt`。
+開始後請對著 Meet 說一句完整中文；停頓後終端機應出現 `AI audio chunk received` 與 `source=stt`。系統使用智慧語音採樣，安靜時不會固定送出音訊。
 
 ## 7. Demo 建議設定
 

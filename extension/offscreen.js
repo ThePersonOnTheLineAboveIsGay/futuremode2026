@@ -1,10 +1,19 @@
-// 6 秒比短片段更能保留中文詞組與上下文，同時維持可接受的即時性。
-const CHUNK_MS = 6000;
+const VAD_FRAME_MS = 100;
+const START_RMS = 0.012;
+const SILENCE_RMS = 0.006;
+const SILENCE_MS = 900;
+const MIN_SEGMENT_MS = 1200;
+const MAX_SEGMENT_MS = 12000;
 let mediaStream = null;
 let audioContext = null;
+let analyser = null;
+let analyserBuffer = null;
 let websocket = null;
 let recorder = null;
-let chunkTimer = null;
+let vadTimer = null;
+let segmentStartedAt = 0;
+let silenceStartedAt = 0;
+let segmentParts = [];
 let stopping = false;
 let audioCaptureEnabled = false;
 let activeMeetingId = null;
@@ -30,7 +39,12 @@ async function start({ streamId, meetingId, websocketUrl }) {
   });
   mediaStream.getAudioTracks()[0]?.addEventListener("ended", () => stop(), { once: true });
   audioContext = new AudioContext();
-  audioContext.createMediaStreamSource(mediaStream).connect(audioContext.destination);
+  const source = audioContext.createMediaStreamSource(mediaStream);
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 2048;
+  analyserBuffer = new Float32Array(analyser.fftSize);
+  source.connect(analyser);
+  source.connect(audioContext.destination);
   websocket = await connectWebSocket(withMeetingId(websocketUrl, meetingId));
   console.info("[Meet AI][offscreen] WebSocket 已連線", { meetingId, websocketUrl });
   const connectedMeetingId = meetingId;
@@ -61,31 +75,97 @@ function connectWebSocket(url) {
 function setAudioCapture(enabled) {
   audioCaptureEnabled = enabled;
   console.info(`[Meet AI][offscreen] AI 中文音訊辨識${enabled ? "啟用" : "停用"}`);
-  if (enabled && !stopping && recorder?.state !== "recording") recordStandaloneChunk();
-  if (!enabled && recorder?.state === "recording") recorder.stop();
+  if (enabled && !stopping) startVadLoop();
+  if (!enabled) {
+    stopVadLoop();
+    stopActiveSegment(false);
+  }
 }
 
 function preferredMimeType() {
   return MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
 }
 
-function recordStandaloneChunk() {
+function startVadLoop() {
+  if (vadTimer || !analyser || !analyserBuffer) return;
+  console.info("[Meet AI][offscreen] 智慧語音採樣啟動", {
+    startRms: START_RMS,
+    silenceRms: SILENCE_RMS,
+    silenceMs: SILENCE_MS,
+    minSegmentMs: MIN_SEGMENT_MS,
+    maxSegmentMs: MAX_SEGMENT_MS
+  });
+  vadTimer = setInterval(sampleVoiceActivity, VAD_FRAME_MS);
+}
+
+function stopVadLoop() {
+  clearInterval(vadTimer);
+  vadTimer = null;
+}
+
+function sampleVoiceActivity() {
+  if (!audioCaptureEnabled || stopping || !analyser || !analyserBuffer) return;
+  const rms = currentRms();
+  const now = Date.now();
+  if (!recorder && rms >= START_RMS) {
+    startActiveSegment(rms);
+    return;
+  }
+  if (!recorder) return;
+
+  if (rms < SILENCE_RMS) {
+    silenceStartedAt ||= now;
+  } else {
+    silenceStartedAt = 0;
+  }
+
+  const durationMs = now - segmentStartedAt;
+  const silentMs = silenceStartedAt ? now - silenceStartedAt : 0;
+  if (durationMs >= MAX_SEGMENT_MS) {
+    stopActiveSegment(true, "max-duration");
+  } else if (durationMs >= MIN_SEGMENT_MS && silentMs >= SILENCE_MS) {
+    stopActiveSegment(true, "silence");
+  }
+}
+
+function currentRms() {
+  analyser.getFloatTimeDomainData(analyserBuffer);
+  let sum = 0;
+  for (const sample of analyserBuffer) sum += sample * sample;
+  return Math.sqrt(sum / analyserBuffer.length);
+}
+
+function startActiveSegment(startRms) {
   if (!audioCaptureEnabled || stopping || !mediaStream || websocket?.readyState !== WebSocket.OPEN) return;
   const mimeType = preferredMimeType();
-  const parts = [];
+  segmentParts = [];
+  segmentStartedAt = Date.now();
+  silenceStartedAt = 0;
   recorder = new MediaRecorder(mediaStream, { mimeType });
-  recorder.addEventListener("dataavailable", (event) => { if (event.data.size) parts.push(event.data); });
+  recorder.addEventListener("dataavailable", (event) => { if (event.data.size) segmentParts.push(event.data); });
   recorder.addEventListener("stop", async () => {
-    if (audioCaptureEnabled && parts.length && websocket?.readyState === WebSocket.OPEN) {
+    const durationMs = Date.now() - segmentStartedAt;
+    const parts = segmentParts;
+    segmentParts = [];
+    segmentStartedAt = 0;
+    silenceStartedAt = 0;
+    if (audioCaptureEnabled && durationMs >= MIN_SEGMENT_MS && parts.length && websocket?.readyState === WebSocket.OPEN) {
       const audio = await new Blob(parts, { type: mimeType }).arrayBuffer();
-      console.info("[Meet AI][offscreen] 傳送 AI 中文辨識音訊 chunk", { bytes: audio.byteLength, mimeType });
+      console.info("[Meet AI][offscreen] 傳送 AI 中文辨識語音段落", { bytes: audio.byteLength, durationMs, mimeType });
       websocket.send(audio);
+    } else {
+      console.info("[Meet AI][offscreen] 忽略過短或空白語音段落", { durationMs, parts: parts.length });
     }
     recorder = null;
-    if (audioCaptureEnabled && !stopping) recordStandaloneChunk();
   }, { once: true });
   recorder.start();
-  chunkTimer = setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, CHUNK_MS);
+  console.info("[Meet AI][offscreen] 偵測到語音，開始錄製段落", { startRms });
+}
+
+function stopActiveSegment(send = true, reason = "manual") {
+  if (recorder?.state !== "recording") return;
+  console.info("[Meet AI][offscreen] 結束語音段落", { send, reason });
+  recorder.stop();
 }
 
 function handleServerMessage(event) {
@@ -101,9 +181,12 @@ function handleServerMessage(event) {
 async function stop() {
   stopping = true;
   audioCaptureEnabled = false;
-  clearTimeout(chunkTimer);
-  if (recorder?.state === "recording") recorder.stop();
+  stopVadLoop();
+  stopActiveSegment(false);
   recorder = null;
+  analyser = null;
+  analyserBuffer = null;
+  segmentParts = [];
   mediaStream?.getTracks().forEach((track) => track.stop());
   mediaStream = null;
   if (websocket?.readyState === WebSocket.OPEN) websocket.close(1000, "Stopped by user");
