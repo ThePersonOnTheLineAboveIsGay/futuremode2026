@@ -16,7 +16,7 @@ SYSTEM_PROMPT = """你是一個謹慎的會議品質監督 AI。你會收到會�
 3. 存在可由逐字稿直接驗證的邏輯或數字錯誤。
 
 當輸入有講者名稱時，只能用「同一位講者」的過往發言判定前後矛盾，絕對不要把不同講者的意見互相比對為矛盾。
-當輸入標示為無講者模式時，不得判定前後矛盾，只能檢查整體離題或可直接驗證的邏輯／數字錯誤。
+當輸入標示為 AI 音訊模式且沒有講者名稱時，可以指出「會議內容」前後不一致，但不得猜測或指名是哪一位講者；target_speaker 必須為 null。
 避免將正常的意見調整、假設、提問、澄清、補充資訊或語音辨識雜訊誤判為問題。
 只有逐字稿內有清楚證據時才標記；不確定就回報無問題。提醒必須簡短、口語、尊重發言者，並指出可核對的前後內容。有講者時，提醒句要明確稱呼該講者。"""
 
@@ -85,7 +85,7 @@ def build_analysis_prompt(history: list[Utterance], latest: Utterance) -> str:
     has_speaker = bool(latest.speaker)
     same_speaker = [item for item in history if has_speaker and item.speaker == latest.speaker]
     same_speaker_text = "\n".join(format_utterance(item) for item in same_speaker) or "（沒有）"
-    mode = "有講者模式" if has_speaker else "無講者模式（禁止判定 contradiction）"
+    mode = "有講者模式" if has_speaker else "AI 音訊模式（可判斷會議內容前後不一致，但不可猜測講者）"
     return (
         f"分析模式：{mode}\n\n完整歷史紀錄：\n{history_text}\n\n"
         f"最新講者的同人歷史：\n{same_speaker_text}\n\n最新發言：\n{format_utterance(latest)}"
@@ -94,15 +94,6 @@ def build_analysis_prompt(history: list[Utterance], latest: Utterance) -> str:
 
 def normalize_analysis(result: InterjectionAnalysis, latest: Utterance) -> InterjectionAnalysis:
     has_speaker = bool(latest.speaker)
-    if not has_speaker and result.issue_type == "contradiction":
-        return InterjectionAnalysis(
-            has_issue=False,
-            issue_type="none",
-            explanation="無講者資訊，略過個人前後矛盾判斷。",
-            suggested_interjection="",
-            confidence=0,
-            target_speaker=None,
-        )
     result.target_speaker = latest.speaker if has_speaker and result.has_issue else None
     return result
 

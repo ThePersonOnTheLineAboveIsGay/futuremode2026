@@ -10,7 +10,7 @@ class Utterance:
     text: str
     timestamp: datetime
     speaker: str | None = None
-    source: str = "caption"
+    source: str = "stt"
 
     def to_dict(self) -> dict[str, str | None]:
         result = asdict(self)
@@ -29,7 +29,7 @@ class ConversationBuffer:
         text: str,
         speaker: str | None = None,
         timestamp: datetime | None = None,
-        source: str = "caption",
+        source: str = "stt",
     ) -> Utterance | None:
         clean_text = " ".join(text.split())
         clean_speaker = speaker.strip() if speaker else None

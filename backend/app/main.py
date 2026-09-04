@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -31,7 +32,7 @@ async def lifespan(app: FastAPI):
     )
     await app.state.rooms.start()
     logger.info(
-        "Meet AI backend ready | provider=%s | configured=%s | analysis_interval=%ss | threshold=%.2f",
+        "Meet AI backend ready | analysis_provider=%s | stt_provider=openrouter | configured=%s | analysis_interval=%ss | threshold=%.2f",
         settings.ai_provider,
         settings.ai_configured,
         settings.analysis_interval_seconds,
@@ -58,7 +59,10 @@ async def health() -> dict[str, str | bool]:
     return {
         "status": "ok",
         "ai_provider": settings.ai_provider,
+        "stt_provider": "openrouter",
         "ai_configured": settings.ai_configured,
+        "analysis_configured": settings.analysis_configured,
+        "stt_configured": settings.stt_configured,
     }
 
 
@@ -76,8 +80,8 @@ async def meeting_socket(websocket: WebSocket) -> None:
     logger.info("[%s] Extension connected", meeting_id)
     ai_services: AIServices | None = websocket.app.state.ai_services
     if ai_services is None:
-        key_name = "OPENAI_API_KEY" if settings.ai_provider == "openai" else "GEMINI_API_KEY"
-        await websocket.send_json({"type": "error", "message": f"後端尚未設定 {key_name}"})
+        missing = "、".join(settings.missing_api_keys)
+        await websocket.send_json({"type": "error", "message": f"後端尚未設定：{missing}"})
         await websocket.close(code=1011)
         await rooms.disconnect(meeting_id, websocket)
         return
@@ -85,6 +89,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
     stt = ai_services.transcriber
     detector = ai_services.detector
     mime_type = "audio/webm"
+    stt_context: deque[str] = deque(maxlen=4)
 
     await websocket.send_json({"type": "status", "status": "connected", "meeting_id": meeting_id})
     try:
@@ -101,12 +106,12 @@ async def meeting_socket(websocket: WebSocket) -> None:
             if message.get("bytes") is not None:
                 try:
                     logger.info(
-                        "[%s] Audio fallback chunk received | bytes=%d | mime=%s",
+                        "[%s] AI audio chunk received | bytes=%d | mime=%s",
                         meeting_id,
                         len(message["bytes"]),
                         mime_type,
                     )
-                    text = await stt.transcribe(message["bytes"], mime_type)
+                    text = await stt.transcribe(message["bytes"], mime_type, " ".join(stt_context))
                 except Exception as exc:
                     logger.exception("Audio transcription failed in room %s", meeting_id)
                     await websocket.send_json({"type": "error", "message": f"語音辨識失敗：{exc}"})
@@ -124,10 +129,10 @@ async def meeting_socket(websocket: WebSocket) -> None:
                     mime_type = str(payload.get("mime_type", mime_type))
                     logger.info("[%s] Client configured | audio=%s", meeting_id, mime_type)
                     continue
-                if payload.get("type") in {"caption", "transcript"}:
+                if payload.get("type") == "transcript":
                     text = str(payload.get("text", "")).strip()
                     speaker = clean_speaker(payload.get("speaker"))
-                    source = "caption" if payload.get("type") == "caption" else "manual"
+                    source = "manual"
                     timestamp = parse_timestamp(payload.get("timestamp"))
                 else:
                     continue
@@ -136,6 +141,9 @@ async def meeting_socket(websocket: WebSocket) -> None:
                 if source == "stt":
                     logger.info("[%s] Audio chunk contained no speech", meeting_id)
                 continue
+
+            if source == "stt":
+                stt_context.append(text)
 
             logger.info(
                 "[%s] Transcript received | source=%s | speaker=%s | text=%s",

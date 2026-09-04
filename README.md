@@ -1,21 +1,23 @@
 # Meet AI 插話員 — 團隊版
 
-SITCON Hackathon 2026「Future of Work」專案。Extension 優先讀取 Google Meet 即時字幕中的講者與文字，後端按會議代碼隔離上下文、偵測同一講者的前後矛盾，再把提醒廣播給同一會議室。提醒同時顯示為 Extension 浮動卡片，並由其中一個 Extension 自動送進 Meet 聊天室，讓沒有安裝 Extension 的與會者也看得到。
+SITCON Hackathon 2026「Future of Work」專案。Extension 直接擷取 Google Meet 分頁音訊，由所選 AI 供應商轉寫成以台灣繁體中文為主的逐字稿；完全不讀取 Google Meet 內建字幕。後端按會議代碼隔離上下文、偵測前後不一致，再把提醒廣播給同一會議室。提醒同時顯示為 Extension 浮動卡片，並由其中一個 Extension 自動送進 Meet 聊天室，讓沒有安裝 Extension 的與會者也看得到。
 
 第一次安裝請先從下方選擇你的作業系統。
 
 ## 資料流程
 
 ```text
-Meet 字幕 DOM ──講者＋文字──┐
-                           ├─ WebSocket ?meeting_id=... ─ RoomManager
-分頁音訊 ─ STT（字幕備援）──┘                              │
-                                                           ├─ 同房 Extension 浮動卡片
-                                                           └─ 指定一個 client 發 Meet 聊天室
+Meet 分頁音訊 ─ 6 秒 chunk ─ WebSocket ?meeting_id=... ─ AI 中文語音辨識
+                                                               │
+                                                               ▼
+                                                          RoomManager + AI 分析
+                                                               ├─ 同房 Extension 浮動卡片／語音
+                                                               └─ 指定一個 client 發 Meet 聊天室
 ```
 
-- 字幕模式：可做同一講者的矛盾、離題及邏輯錯誤判斷。
-- 音訊備援模式：沒有講者資訊，因此禁止判定個人前後矛盾，只檢查整體離題及明顯邏輯／數字錯誤。
+- 中文辨識提示會要求繁體中文、台灣用詞，並保留英文專有名詞、數字與單位。
+- 每段辨識會帶入最近四段逐字稿作為銜接上下文，降低中文斷詞和專有名詞漂移。
+- 音訊沒有可靠講者姓名，因此只提醒「會議內容前後不一致」，不會猜測或指名發言者。
 - API key 只存在後端 `.env`，不會放進 Extension。
 
 ## 選擇你的系統
@@ -30,11 +32,11 @@ Meet 字幕 DOM ──講者＋文字──┐
 
 已經安裝過、要取得新版功能時，請按照 [更新教學](update.md) 操作。
 
-所有系統完成安裝後的會議操作都相同：啟動後端、載入 Extension、加入 Meet、手動開啟字幕，再按 Extension 的「開始監聽」。
+所有系統完成安裝後的會議操作都相同：啟動後端、載入 Extension、加入 Meet，再按 Extension 的「開始監聽」。Meet 字幕不需要開啟。
 
 ## 選擇 AI 供應商
 
-在 `.env` 設定 `AI_PROVIDER=openai` 或 `AI_PROVIDER=gemini`，再填入對應的 API key。供應商由後端統一控制，Extension 不會接觸金鑰。
+語音辨識固定走 OpenRouter 的 `openai/whisper-large-v3`，因此一定要先在 [OpenRouter Keys](https://openrouter.ai/settings/keys) 建立並提供 `OPENROUTER_API_KEY`。`AI_PROVIDER` 只決定後續矛盾分析使用 OpenAI 或 Gemini；兩種金鑰都只放在後端，Extension 不會接觸。
 
 OpenAI：
 
@@ -42,6 +44,7 @@ OpenAI：
 AI_PROVIDER=openai
 OPENAI_API_KEY=sk-你的金鑰
 GEMINI_API_KEY=
+OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 ```
 
 Gemini：
@@ -50,11 +53,12 @@ Gemini：
 AI_PROVIDER=gemini
 OPENAI_API_KEY=
 GEMINI_API_KEY=你的金鑰
+OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 ```
 
-模型由後端的建議預設值管理，一般使用者不必在 `.env` 設定模型，也不建議自行加入模型欄位。目前 Gemini 使用 `gemini-3.6-flash`；舊 `.env` 若仍是已退役的 `gemini-2.5-flash`，後端會自動升級。
+模型由後端的建議預設值管理，一般使用者不必在 `.env` 設定模型，也不建議自行加入模型欄位。STT 固定為 `openai/whisper-large-v3`；目前 Gemini 分析使用 `gemini-3.6-flash`。
 
-切換 provider 或 key 後必須重新啟動後端。字幕擷取、room、廣播及 Meet UI 不需要修改。
+切換 provider 或 key 後必須重新啟動後端。音訊擷取、room、廣播及 Meet UI 不需要修改。
 
 ## 團隊版行為
 
@@ -72,21 +76,11 @@ ws://localhost:8000/ws/meeting?meeting_id=xxx-yyyy-zzz
 
 同房所有已安裝 Extension 的使用者都會收到浮動卡片。為防止多台裝置把同一提醒重複貼到聊天室，後端只指定一個連線作為聊天室發送端；該連線離開後會自動選下一個。
 
-同一講者 60 秒內只有第一則提醒會送進聊天室，後續判斷仍可廣播浮動卡片。聊天室被主持人停用或 Meet DOM 改版時，Extension 會顯示發送失敗提示。
+同一會議 60 秒內只有第一則提醒會送進聊天室，後續判斷仍可廣播浮動卡片。聊天室被主持人停用或 Meet DOM 改版時，Extension 會顯示發送失敗提示。
 
 ## WebSocket 訊息
 
-字幕事件：
-
-```json
-{
-  "type": "caption",
-  "meeting_id": "xxx-yyyy-zzz",
-  "speaker": "王小明",
-  "text": "所以我們就照方案 B 開始執行吧",
-  "timestamp": 1735900000
-}
-```
+Extension 會透過 WebSocket 傳送 `audio/webm;codecs=opus` binary chunk。後端把 AI 逐字稿回傳成 `type: transcript`，speaker 為 `null`。
 
 插話事件：
 
@@ -94,10 +88,10 @@ ws://localhost:8000/ws/meeting?meeting_id=xxx-yyyy-zzz
 {
   "type": "interjection",
   "meeting_id": "xxx-yyyy-zzz",
-  "target_speaker": "王小明",
+  "target_speaker": null,
   "issue_type": "contradiction",
   "explanation": "稍早提到方案 A，現在改為方案 B，未說明原因。",
-  "message": "🤖 AI 提醒：王小明，你稍早提到要用方案 A，現在說的是方案 B，要說明改變原因嗎？",
+  "message": "🤖 AI 提醒：會議稍早提到要用方案 A，現在說的是方案 B，要說明改變原因嗎？",
   "confidence": 0.82,
   "send_to_chat": true
 }
@@ -124,17 +118,17 @@ WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
 {"type":"transcript","meeting_id":"xxx-yyyy-zzz","speaker":"主持人","text":"我們決定採用方案 A。"}
 ```
 
-音訊 binary chunk 不含講者，會自動進入無講者判斷模式。
+音訊 binary chunk 不含講者，會以整場會議內容判斷，不會猜測講者姓名。
 
 ## 多人 Demo
 
 準備兩台筆電，或兩個不同帳號的瀏覽器視窗：
 
 1. 裝置 A 安裝 Extension；裝置 B 不安裝，兩者加入同一個 Meet。
-2. 裝置 A 開啟 Meet 字幕，再啟動 Extension。
+2. 裝置 A 啟動 Extension；不需要開啟 Meet 字幕。
 3. 主持人說：「這次專案決定用方案 A，因為成本比較低。」
 4. 等待分析節流時間後說：「所以我們就照方案 B 開始執行吧。」
-5. 裝置 A 應顯示針對主持人的浮動卡片。
+5. 裝置 A 應顯示「會議內容前後不一致」浮動卡片。
 6. 裝置 B 應在 Meet 聊天室看到 `🤖 AI 提醒：...`，證明未安裝 Extension 也能收到提醒。
 
 舞台 demo 可把 `.env` 的 `ANALYSIS_INTERVAL_SECONDS=5`。另開一場不同代碼的 Meet，可確認兩場逐字稿及提醒不會互相出現。
@@ -145,15 +139,16 @@ WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
 
 ```text
 [xxx-yyyy-zzz] Extension connected
-[xxx-yyyy-zzz] Transcript received | source=caption | speaker=王小明 | text=...
+[xxx-yyyy-zzz] AI audio chunk received | bytes=... | mime=audio/webm;codecs=opus
+[xxx-yyyy-zzz] Transcript received | source=stt | speaker=unknown | text=...
 [xxx-yyyy-zzz] Sending transcript history to gemini for analysis
 [xxx-yyyy-zzz] AI result | issue=true | type=contradiction | confidence=0.82 ...
 [xxx-yyyy-zzz] INTERJECTION broadcast | chat=true | message=...
 ```
 
-如果看到 `source=stt`，代表 Extension 沒抓到 Meet 字幕，目前在音訊備援模式；請確認 Meet 畫面真的有顯示字幕。`AI result` 若是 `issue=false` 或信心低於 `.env` 的門檻，系統刻意不插話。第一次發言只有建立歷史，也不會立刻判斷矛盾。
+正常情況就會顯示 `source=stt`，代表逐字稿由 AI 從音訊產生。`AI result` 若是 `issue=false` 或信心低於 `.env` 的門檻，系統刻意不插話。第一段發言只有建立歷史，也不會立刻判斷矛盾。
 
-Extension 的前端 log：在 Meet 頁面按 `F12` → `Console`，搜尋 `[Meet AI]`。這裡會顯示字幕偵測、字幕送出、插話收到、聊天室送出以及語音播放成功或失敗。
+Extension 的前端 log：在 Meet 頁面按 `F12` → `Console`，搜尋 `[Meet AI]`。這裡會顯示音訊 chunk、插話收到、聊天室送出以及語音播放成功或失敗。
 
 不必等待 AI 就能測試輸出：
 
@@ -167,9 +162,10 @@ Windows 若看得到卡片但沒有聲音，請先確認目前輸出裝置與音
 
 ## 已知限制
 
-- Google Meet 沒有公開穩定的字幕／聊天室 DOM API。Extension 使用多組文字、ARIA 與已知字幕 selector；Meet UI 更新後可能需要調整 `content_script.js`。
+- 專案不使用 Meet 字幕 DOM；聊天室自動發送仍依賴 Meet UI，因此 Meet 改版後可能需要調整 `content_script.js`。
 - 聊天室必須允許該使用者傳訊息。主持人關閉聊天、帳號政策限制或輸入框尚未載入時，無法自動發送。
-- 字幕內容會在約 900 ms 沒有更新後才送出，避免逐字增長造成大量重複事件；後端另有 5 秒同講者同文字去重。
+- 每 6 秒音訊會呼叫一次所選 AI 供應商，成本與網路用量會高於讀取 Meet 字幕。
+- 混合音訊無法可靠對應 Meet 顯示名稱；若未來需要指名講者，必須另外導入模型 diarization 與身分對照流程。
 - 這版 room 狀態存在單一 backend process 的記憶體。若水平擴展多個 backend instance，應將 `RoomManager` 換成 Redis pub/sub 與共享狀態。
 - 正式部署前應加入會議參與者同意、TLS、WebSocket 驗證、資料保留政策及速率限制。
 
@@ -179,7 +175,8 @@ Windows 若看得到卡片但沒有聲音，請先確認目前輸出裝置與音
 backend/app/main.py                WebSocket 收件與分析流程
 backend/app/room_manager.py        Room 狀態、分組廣播、冷卻與清理
 backend/app/conversation_buffer.py 逐字稿、講者歷史與去重
-backend/app/contradiction.py       有講者／無講者結構化判斷
-extension/content_script.js        字幕監聽、浮動 UI、Meet 聊天室發送
-extension/offscreen.js             Room WebSocket 與音訊備援
+backend/app/contradiction.py       會議內容的結構化矛盾判斷
+backend/app/stt.py                 OpenRouter Whisper 中文語音辨識
+extension/content_script.js        浮動 UI、語音、Meet 聊天室發送
+extension/offscreen.js             分頁音訊擷取與 Room WebSocket
 ```

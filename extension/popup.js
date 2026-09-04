@@ -10,7 +10,6 @@ init();
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "status") setStatus(message.status !== "disconnected", message.status);
   if (message.type === "error") errorEl.textContent = message.message;
-  if (message.type === "caption-status") setMode(message.available ? "captions" : "audio-fallback", message.meeting_id);
   if (message.type === "tts-diagnostic") showTtsDiagnostic(message.diagnostic);
 });
 
@@ -105,6 +104,6 @@ function setMode(mode, meetingId) {
     modeEl.textContent = "";
     return;
   }
-  const label = mode === "captions" ? "字幕＋講者模式" : "音訊備援模式（無講者）";
+  const label = mode === "ai-audio" ? "AI 中文音訊辨識模式" : "音訊辨識模式";
   modeEl.textContent = `${label}${meetingId ? ` · ${meetingId}` : ""}`;
 }

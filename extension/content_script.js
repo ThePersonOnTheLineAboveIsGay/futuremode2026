@@ -1,17 +1,4 @@
-const meetingId = getMeetingId();
-const captionTextSelectors = [
-  '[jsname="tgaKEf"]',
-  ".iTTPOb.VbkSUe",
-  ".ygicle.VbkSUe",
-  ".CNusmb"
-];
-const speakerSelectors = [".zs7s8d", '[data-speaker-name]', '[jsname="E2KThb"]'];
-const pendingBySpeaker = new Map();
-let captionObserver = null;
-let captionAvailable = false;
-let captionPromptTimer = null;
 let hideTimer = null;
-let scanScheduled = false;
 
 const host = document.createElement("div");
 host.id = "meet-ai-interrupter-root";
@@ -48,24 +35,8 @@ root.querySelectorAll(".close, .ignore").forEach((button) => {
   button.addEventListener("click", () => button.closest("aside").classList.remove("show"));
 });
 
-chrome.storage.local.get(["listening", "meetingId"]).then((saved) => {
-  if (saved.listening && saved.meetingId === meetingId) {
-    startCaptionObserver();
-    updateCaptionStatus(detectCaptionEnabled());
-    scheduleCaptionPrompt();
-  }
-});
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target !== "content") return false;
-  if (message.type === "prepare-captions") {
-    startCaptionObserver();
-    const available = detectCaptionEnabled();
-    updateCaptionStatus(available);
-    scheduleCaptionPrompt();
-    sendResponse({ meetingId, captionAvailable: available });
-    return false;
-  }
   if (message.type === "interjection") {
     debugLog("收到 AI 插話", message);
     showInterjection(message);
@@ -100,109 +71,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   return false;
 });
-
-function getMeetingId() {
-  const segment = location.pathname.split("/").filter(Boolean)[0] || "";
-  return /^[a-z0-9][a-z0-9-]{2,127}$/i.test(segment) ? segment.toLowerCase() : null;
-}
-
-function startCaptionObserver() {
-  if (captionObserver) return;
-  captionObserver = new MutationObserver(scheduleCaptionScan);
-  captionObserver.observe(document.body, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-    attributes: true,
-    attributeFilter: ["aria-label", "aria-pressed"]
-  });
-  debugLog("字幕 MutationObserver 已啟動", { meetingId });
-  scanCaptions();
-}
-
-function scheduleCaptionScan() {
-  if (scanScheduled) return;
-  scanScheduled = true;
-  setTimeout(() => {
-    scanScheduled = false;
-    scanCaptions();
-  }, 100);
-}
-
-function scanCaptions() {
-  const enabled = detectCaptionEnabled();
-  updateCaptionStatus(enabled);
-  const nodes = document.querySelectorAll(captionTextSelectors.join(","));
-  nodes.forEach((textNode) => {
-    const parsed = parseCaptionNode(textNode);
-    if (parsed) queueStableCaption(parsed.speaker, parsed.text);
-  });
-}
-
-function detectCaptionEnabled() {
-  if (document.querySelector(captionTextSelectors.join(","))) return true;
-  return Array.from(document.querySelectorAll('button[aria-label], [role="button"][aria-label]')).some((element) => {
-    const label = (element.getAttribute("aria-label") || "").toLowerCase();
-    const isCaptionControl = /caption|subtitle|字幕/.test(label);
-    return isCaptionControl && (element.getAttribute("aria-pressed") === "true" || /turn off|關閉|停止/.test(label));
-  });
-}
-
-function parseCaptionNode(textNode) {
-  const text = normalizeText(textNode.textContent);
-  if (!text || text.length > 1000) return null;
-  let row = textNode;
-  for (let depth = 0; row && depth < 6; depth += 1, row = row.parentElement) {
-    const speakerElement = row.querySelector?.(speakerSelectors.join(","));
-    const speaker = normalizeText(speakerElement?.textContent);
-    if (speaker && speaker !== text) return { speaker, text };
-    const lines = (row.innerText || "").split("\n").map(normalizeText).filter(Boolean);
-    if (lines.length >= 2 && lines[0].length <= 100 && lines.slice(1).join(" ").includes(text)) {
-      return { speaker: lines[0], text };
-    }
-  }
-  return null;
-}
-
-function queueStableCaption(speaker, text) {
-  const previous = pendingBySpeaker.get(speaker);
-  if (previous?.text === text || previous?.lastSent === text) return;
-  if (previous?.timer) clearTimeout(previous.timer);
-  const state = { text, lastSent: previous?.lastSent || "", timer: null };
-  state.timer = setTimeout(() => {
-    state.lastSent = state.text;
-    debugLog("擷取字幕並送往後端", { speaker, text: state.text });
-    chrome.runtime.sendMessage({
-      type: "caption",
-      meeting_id: meetingId,
-      speaker,
-      text: state.text,
-      timestamp: Date.now() / 1000
-    });
-  }, 900);
-  pendingBySpeaker.set(speaker, state);
-}
-
-function updateCaptionStatus(available) {
-  if (available === captionAvailable) return;
-  captionAvailable = available;
-  debugLog(available ? "已偵測到 Meet 字幕，使用講者模式" : "未偵測到 Meet 字幕，使用音訊備援模式");
-  chrome.runtime.sendMessage({ type: "caption-status", meeting_id: meetingId, available });
-  if (available) {
-    clearTimeout(captionPromptTimer);
-    notice.classList.remove("show");
-  } else {
-    scheduleCaptionPrompt();
-  }
-}
-
-function scheduleCaptionPrompt() {
-  clearTimeout(captionPromptTimer);
-  if (captionAvailable) return;
-  captionPromptTimer = setTimeout(() => {
-    if (!captionAvailable) showNotice("請手動開啟 Google Meet 的「顯示字幕」。目前暫時使用無講者音訊備援模式。");
-  }, 3000);
-}
 
 function showInterjection(message) {
   const labels = { contradiction: "前後矛盾", off_topic: "可能離題", logical_error: "邏輯錯誤" };
@@ -244,16 +112,19 @@ function speakInterjection(text) {
 
   utterance.onstart = () => {
     started = true;
+    chrome.runtime.sendMessage({ type: "tts-playback-state", active: true });
     publishTtsDiagnostic("playing", `正在播放，語音：${environment.selectedVoice}`, environment);
     debugLog("語音開始播放", environment);
   };
   utterance.onend = () => {
     finished = true;
+    chrome.runtime.sendMessage({ type: "tts-playback-state", active: false });
     publishTtsDiagnostic("success", `語音播放完成，語音：${environment.selectedVoice}`, environment);
     debugLog("語音播放完成");
   };
   utterance.onerror = (event) => {
     finished = true;
+    chrome.runtime.sendMessage({ type: "tts-playback-state", active: false });
     const reason = explainSpeechError(event.error);
     publishTtsDiagnostic("failed", reason, { ...environment, browserError: event.error || "unknown" });
     console.error("[Meet AI][content] 語音播放失敗", { browserError: event.error, reason, environment });
@@ -396,10 +267,6 @@ function waitForChatInput(timeoutMs) {
     observer.observe(document.body, { childList: true, subtree: true });
     setTimeout(() => { observer.disconnect(); resolve(null); }, timeoutMs);
   });
-}
-
-function normalizeText(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 function debugLog(message, detail) {

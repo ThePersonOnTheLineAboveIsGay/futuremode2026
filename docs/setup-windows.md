@@ -11,7 +11,7 @@
 - Git
 - Google Chrome
 - [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/)，或 Python 3.11 以上
-- OpenAI API key 或 Gemini API key
+- OpenRouter API key，以及 OpenAI API key 或 Gemini API key
 
 Docker Desktop 建議使用 WSL 2 backend。安裝後要實際開啟 Docker Desktop，等畫面顯示 engine 已啟動。
 
@@ -48,7 +48,7 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-選擇一個供應商並填入對應的 key。
+語音辨識固定使用 OpenRouter；另外選擇一個供應商做矛盾分析。因此需要 OpenRouter key 加上一個 OpenAI 或 Gemini key。
 
 使用 OpenAI：
 
@@ -56,6 +56,7 @@ notepad .env
 AI_PROVIDER=openai
 OPENAI_API_KEY=sk-你的金鑰
 GEMINI_API_KEY=
+OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 ```
 
 使用 Gemini：
@@ -64,9 +65,10 @@ GEMINI_API_KEY=
 AI_PROVIDER=gemini
 OPENAI_API_KEY=
 GEMINI_API_KEY=你的金鑰
+OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 ```
 
-模型由後端管理，一般不要在 `.env` 加入 `WHISPER_MODEL`、`LLM_MODEL` 或 `GEMINI_MODEL`。若舊 `.env` 仍有 `GEMINI_MODEL=gemini-2.5-flash`，更新後的後端會自動改用 `gemini-3.6-flash`。
+模型由後端管理，一般不要在 `.env` 加入模型欄位。語音辨識固定使用 `openai/whisper-large-v3`。
 
 `.env` 已被 Git 忽略，不要把金鑰貼進 `extension`、README 或 commit。
 
@@ -81,7 +83,7 @@ docker compose up --build
 看到 Uvicorn 在 `0.0.0.0:8000` 執行後，開啟 <http://localhost:8000/health>。正常應顯示：
 
 ```json
-{"status":"ok","ai_provider":"openai","ai_configured":true}
+{"status":"ok","ai_provider":"openai","stt_provider":"openrouter","ai_configured":true,"analysis_configured":true,"stt_configured":true}
 ```
 
 停止後端可按 `Ctrl+C`，再執行：
@@ -126,14 +128,14 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 ## 6. 第一次 Meet 測試
 
 1. 加入網址類似 `https://meet.google.com/xxx-yyyy-zzz` 的會議。
-2. 手動開啟 Meet「顯示字幕」。
+2. 不需要開啟 Meet 字幕；系統會把分頁音訊送給 AI 做繁體中文辨識。
 3. 打開 Extension，保留 `ws://localhost:8000/ws/meeting`。
 4. 按「開始監聽」。
-5. 確認 popup 顯示「字幕＋講者模式」及會議代碼。
+5. 確認 popup 顯示「AI 中文音訊辨識模式」及會議代碼。
 6. 按「測試聊天室發送」。
 7. Meet 聊天室應出現 `🤖 AI 提醒：[測試] Meet AI 插話員已連接聊天室。`
 
-若顯示音訊備援模式，先讓某位參與者說話，使字幕 DOM 出現。
+開始後約每 6 秒送出一個音訊片段，PowerShell 應出現 `AI audio chunk received` 與 `source=stt`。
 
 ## 7. Demo 建議設定
 
@@ -187,4 +189,4 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ### `ai_configured` 是 `false`
 
-確認 `.env` 位於專案根目錄，且 `AI_PROVIDER` 對應的 key 已填寫；修改後重新啟動後端。
+確認 `.env` 位於專案根目錄、`OPENROUTER_API_KEY` 已填寫，且 `AI_PROVIDER` 對應的分析 key 也已填寫；修改後重新啟動後端。`stt_configured=false` 代表缺少 OpenRouter key，`analysis_configured=false` 代表缺少 OpenAI／Gemini key。

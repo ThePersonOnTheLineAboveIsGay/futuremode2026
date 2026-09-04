@@ -6,7 +6,7 @@
 
 ## 1. 安裝必要工具
 
-請準備 Git、Google Chrome、OpenAI API key 或 Gemini API key，以及 Docker 或 Python。
+請準備 Git、Google Chrome、OpenRouter API key、OpenAI API key 或 Gemini API key，以及 Docker 或 Python。
 
 Docker 路線請安裝對應晶片版本的 [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/)，安裝後開啟 `/Applications/Docker.app` 並等待 engine 啟動。
 
@@ -53,6 +53,7 @@ ${EDITOR:-nano} .env
 AI_PROVIDER=openai
 OPENAI_API_KEY=sk-你的金鑰
 GEMINI_API_KEY=
+OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 ```
 
 使用 Gemini：
@@ -61,6 +62,7 @@ GEMINI_API_KEY=
 AI_PROVIDER=gemini
 OPENAI_API_KEY=
 GEMINI_API_KEY=你的金鑰
+OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 ```
 
 模型建議值已由後端管理，一般不要在 `.env` 加入模型欄位。不要將 `.env` 或 API key commit 到 Git。
@@ -76,7 +78,7 @@ docker compose up --build
 開啟 <http://localhost:8000/health>，正常應顯示：
 
 ```json
-{"status":"ok","ai_provider":"openai","ai_configured":true}
+{"status":"ok","ai_provider":"openai","stt_provider":"openrouter","ai_configured":true,"analysis_configured":true,"stt_configured":true}
 ```
 
 停止服務：
@@ -118,13 +120,13 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 ## 6. 第一次 Meet 測試
 
 1. 加入 Google Meet。
-2. 手動開啟「顯示字幕」。
+2. 不需要開啟 Meet 字幕；系統會把分頁音訊送給 AI 做繁體中文辨識。
 3. 打開 Extension，確認 URL 為 `ws://localhost:8000/ws/meeting`。
 4. 按「開始監聽」。
-5. 確認顯示「字幕＋講者模式」。
+5. 確認顯示「AI 中文音訊辨識模式」。
 6. 按「測試聊天室發送」，確認聊天室出現 `[測試]` 訊息。
 
-如果先顯示音訊備援模式，讓參與者說一句話，待字幕出現後應自動切換。
+開始後約每 6 秒送出一個音訊片段，終端機應出現 `AI audio chunk received` 與 `source=stt`。
 
 ## 7. Demo 建議設定
 

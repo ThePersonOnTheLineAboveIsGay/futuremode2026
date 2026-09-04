@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     ai_provider: Literal["openai", "gemini"] = Field(default="openai", alias="AI_PROVIDER")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
-    whisper_model: str = Field(default="gpt-4o-transcribe", alias="WHISPER_MODEL")
+    openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     llm_model: str = Field(default="gpt-4o", alias="LLM_MODEL")
     gemini_model: str = Field(default="gemini-3.6-flash", alias="GEMINI_MODEL")
     interjection_confidence_threshold: float = Field(default=0.7, alias="INTERJECTION_CONFIDENCE_THRESHOLD")
@@ -30,7 +30,25 @@ class Settings(BaseSettings):
 
     @property
     def ai_configured(self) -> bool:
+        return self.analysis_configured and self.stt_configured
+
+    @property
+    def analysis_configured(self) -> bool:
         return bool(self.openai_api_key if self.ai_provider == "openai" else self.gemini_api_key)
+
+    @property
+    def stt_configured(self) -> bool:
+        return bool(self.openrouter_api_key)
+
+    @property
+    def missing_api_keys(self) -> list[str]:
+        missing: list[str] = []
+        analysis_key = "OPENAI_API_KEY" if self.ai_provider == "openai" else "GEMINI_API_KEY"
+        if not self.analysis_configured:
+            missing.append(analysis_key)
+        if not self.stt_configured:
+            missing.append("OPENROUTER_API_KEY")
+        return missing
 
     @field_validator("gemini_model", mode="before")
     @classmethod

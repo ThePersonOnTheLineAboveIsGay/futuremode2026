@@ -1,11 +1,12 @@
-const CHUNK_MS = 4000;
+// 6 秒比短片段更能保留中文詞組與上下文，同時維持可接受的即時性。
+const CHUNK_MS = 6000;
 let mediaStream = null;
 let audioContext = null;
 let websocket = null;
 let recorder = null;
 let chunkTimer = null;
 let stopping = false;
-let audioFallbackEnabled = false;
+let audioCaptureEnabled = false;
 let activeMeetingId = null;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -15,14 +16,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.type === "stop-capture") stop();
-  if (message.type === "caption") sendCaption(message);
-  if (message.type === "caption-status" && message.meeting_id === activeMeetingId) {
-    setAudioFallback(!message.available);
-  }
+  if (message.type === "tts-playback-state") setAudioCapture(!message.active);
   return false;
 });
 
-async function start({ streamId, meetingId, websocketUrl, ttsEnabled, captionAvailable }) {
+async function start({ streamId, meetingId, websocketUrl }) {
   await stop();
   stopping = false;
   activeMeetingId = meetingId;
@@ -41,7 +39,7 @@ async function start({ streamId, meetingId, websocketUrl, ttsEnabled, captionAva
   websocket.addEventListener("close", () => chrome.runtime.sendMessage({
     type: "status", status: "disconnected", meeting_id: connectedMeetingId
   }));
-  setAudioFallback(!captionAvailable);
+  setAudioCapture(true);
   chrome.runtime.sendMessage({ type: "status", status: "listening", meeting_id: meetingId });
 }
 
@@ -60,24 +58,9 @@ function connectWebSocket(url) {
   });
 }
 
-function sendCaption(message) {
-  if (message.meeting_id !== activeMeetingId || websocket?.readyState !== WebSocket.OPEN) {
-    console.warn("[Meet AI][offscreen] 字幕未送出：房間不符或 WebSocket 未連線", message);
-    return;
-  }
-  console.info("[Meet AI][offscreen] 傳送字幕", { speaker: message.speaker, text: message.text });
-  websocket.send(JSON.stringify({
-    type: "caption",
-    meeting_id: activeMeetingId,
-    speaker: message.speaker,
-    text: message.text,
-    timestamp: message.timestamp
-  }));
-}
-
-function setAudioFallback(enabled) {
-  audioFallbackEnabled = enabled;
-  console.info(`[Meet AI][offscreen] 音訊備援${enabled ? "啟用" : "停用"}`);
+function setAudioCapture(enabled) {
+  audioCaptureEnabled = enabled;
+  console.info(`[Meet AI][offscreen] AI 中文音訊辨識${enabled ? "啟用" : "停用"}`);
   if (enabled && !stopping && recorder?.state !== "recording") recordStandaloneChunk();
   if (!enabled && recorder?.state === "recording") recorder.stop();
 }
@@ -87,19 +70,19 @@ function preferredMimeType() {
 }
 
 function recordStandaloneChunk() {
-  if (!audioFallbackEnabled || stopping || !mediaStream || websocket?.readyState !== WebSocket.OPEN) return;
+  if (!audioCaptureEnabled || stopping || !mediaStream || websocket?.readyState !== WebSocket.OPEN) return;
   const mimeType = preferredMimeType();
   const parts = [];
   recorder = new MediaRecorder(mediaStream, { mimeType });
   recorder.addEventListener("dataavailable", (event) => { if (event.data.size) parts.push(event.data); });
   recorder.addEventListener("stop", async () => {
-    if (audioFallbackEnabled && parts.length && websocket?.readyState === WebSocket.OPEN) {
+    if (audioCaptureEnabled && parts.length && websocket?.readyState === WebSocket.OPEN) {
       const audio = await new Blob(parts, { type: mimeType }).arrayBuffer();
-      console.info("[Meet AI][offscreen] 傳送音訊備援 chunk", { bytes: audio.byteLength, mimeType });
+      console.info("[Meet AI][offscreen] 傳送 AI 中文辨識音訊 chunk", { bytes: audio.byteLength, mimeType });
       websocket.send(audio);
     }
     recorder = null;
-    if (audioFallbackEnabled && !stopping) recordStandaloneChunk();
+    if (audioCaptureEnabled && !stopping) recordStandaloneChunk();
   }, { once: true });
   recorder.start();
   chunkTimer = setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, CHUNK_MS);
@@ -117,7 +100,7 @@ function handleServerMessage(event) {
 
 async function stop() {
   stopping = true;
-  audioFallbackEnabled = false;
+  audioCaptureEnabled = false;
   clearTimeout(chunkTimer);
   if (recorder?.state === "recording") recorder.stop();
   recorder = null;

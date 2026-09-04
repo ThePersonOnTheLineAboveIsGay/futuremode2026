@@ -20,7 +20,7 @@ class FakeResponses:
         )
 
 
-def test_detector_disables_contradiction_without_speaker() -> None:
+def test_detector_allows_meeting_level_contradiction_without_guessing_speaker() -> None:
     async def scenario() -> None:
         detector = ContradictionDetector(SimpleNamespace(responses=FakeResponses()), "test-model")
         now = datetime.now(timezone.utc)
@@ -28,8 +28,8 @@ def test_detector_disables_contradiction_without_speaker() -> None:
             [Utterance("採用 A", now, speaker=None, source="stt")],
             Utterance("採用 B", now, speaker=None, source="stt"),
         )
-        assert not result.has_issue
-        assert result.issue_type == "none"
+        assert result.has_issue
+        assert result.issue_type == "contradiction"
         assert result.target_speaker is None
 
     asyncio.run(scenario())

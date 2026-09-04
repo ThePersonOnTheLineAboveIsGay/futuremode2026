@@ -13,12 +13,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
-  if (message.type === "caption" || message.type === "caption-status") {
-    console.info("[Meet AI][background] 字幕事件", message);
-    chrome.runtime.sendMessage({ ...message, target: "offscreen" });
-    if (message.type === "caption-status") {
-      chrome.storage.local.set({ captureMode: message.available ? "captions" : "audio-fallback" });
-    }
+  if (message.type === "tts-playback-state") {
+    chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "tts-playback-state",
+      active: Boolean(message.active)
+    });
     return false;
   }
   if (["interjection", "transcript", "status", "error"].includes(message.type)) {
@@ -38,8 +38,7 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled }) {
   const meetingId = meetingIdFromUrl(tab.url);
   if (!meetingId) throw new Error("無法從目前網址取得 Meet 會議代碼");
 
-  const captionState = await chrome.tabs.sendMessage(tabId, { target: "content", type: "prepare-captions" });
-  console.info("[Meet AI][background] 開始監聽", { meetingId, websocketUrl, ttsEnabled, captionState });
+  console.info("[Meet AI][background] 開始 AI 中文音訊辨識", { meetingId, websocketUrl, ttsEnabled });
   await ensureOffscreenDocument();
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
   const result = await chrome.runtime.sendMessage({
@@ -48,8 +47,7 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled }) {
     streamId,
     meetingId,
     websocketUrl,
-    ttsEnabled,
-    captionAvailable: Boolean(captionState?.captionAvailable)
+    ttsEnabled
   });
   if (!result?.ok) throw new Error(result?.error || "無法啟動會議監聽");
   await chrome.storage.local.set({
@@ -57,10 +55,10 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled }) {
     websocketUrl,
     ttsEnabled,
     meetingId,
-    captureMode: captionState?.captionAvailable ? "captions" : "audio-fallback"
+    captureMode: "ai-audio"
   });
   updateBadge(true);
-  return { ok: true, meetingId, captureMode: captionState?.captionAvailable ? "captions" : "audio-fallback" };
+  return { ok: true, meetingId, captureMode: "ai-audio" };
 }
 
 async function ensureOffscreenDocument() {
@@ -70,7 +68,7 @@ async function ensureOffscreenDocument() {
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_PATH,
     reasons: ["USER_MEDIA"],
-    justification: "Keep the room WebSocket alive and provide audio transcription fallback when Meet captions are unavailable."
+    justification: "Capture meeting tab audio for AI-powered Traditional Chinese transcription."
   });
 }
 

@@ -1,49 +1,78 @@
 import base64
-from io import BytesIO
 
-from openai import AsyncOpenAI
-from google import genai
+import httpx
+
+OPENROUTER_STT_MODEL = "openai/whisper-large-v3"
+OPENROUTER_TRANSCRIPTION_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 
 
-class SpeechToText:
-    def __init__(self, client: AsyncOpenAI, model: str) -> None:
+def build_chinese_transcription_prompt(context: str = "") -> str:
+    clean_context = " ".join(context.split())[-800:]
+    instructions = (
+        "這是以台灣繁體中文為主的線上會議。請忠實逐字轉寫音訊，使用繁體中文與台灣常用詞彙，"
+        "保留英文專有名詞、產品名稱、數字與單位。不要翻譯成英文，不要摘要，不要解釋，"
+        "不要加入講者名稱或音訊中沒有說出的內容。沒有清楚人聲時只回傳空字串。"
+    )
+    if clean_context:
+        instructions += f" 前一段逐字稿如下，僅用於銜接斷句與專有名詞：{clean_context}"
+    return instructions
+
+
+class OpenRouterSpeechToText:
+    def __init__(self, client: httpx.AsyncClient) -> None:
         self.client = client
-        self.model = model
+        self.model = OPENROUTER_STT_MODEL
 
-    async def transcribe(self, audio: bytes, mime_type: str = "audio/webm") -> str:
+    async def transcribe(
+        self, audio: bytes, mime_type: str = "audio/webm", context: str = ""
+    ) -> str:
         if not audio:
             return ""
-        extension = "ogg" if "ogg" in mime_type else "webm"
-        audio_file = BytesIO(audio)
-        audio_file.name = f"meeting-chunk.{extension}"
-        result = await self.client.audio.transcriptions.create(
-            model=self.model, file=audio_file, language="zh", response_format="json"
-        )
-        return (result.text or "").strip()
-
-
-class GeminiSpeechToText:
-    def __init__(self, client: genai.Client, model: str) -> None:
-        self.client = client
-        self.model = model
-
-    async def transcribe(self, audio: bytes, mime_type: str = "audio/webm") -> str:
-        if not audio:
-            return ""
-        clean_mime_type = mime_type.split(";", 1)[0]
-        interaction = await self.client.aio.interactions.create(
-            model=self.model,
-            input=[
-                {
-                    "type": "text",
-                    "text": "請逐字轉寫這段會議音訊。只輸出逐字稿，不要摘要、解釋或加上標點以外的註記。",
-                },
-                {
-                    "type": "audio",
+        audio_format = audio_format_from_mime_type(mime_type)
+        prompt = build_chinese_transcription_prompt(context)
+        response = await self.client.post(
+            OPENROUTER_TRANSCRIPTION_URL,
+            json={
+                "model": self.model,
+                "input_audio": {
                     "data": base64.b64encode(audio).decode("ascii"),
-                    "mime_type": clean_mime_type,
+                    "format": audio_format,
                 },
-            ],
-            store=False,
+                "language": "zh",
+                "temperature": 0,
+                "provider": {
+                    "options": {
+                        "groq": {"prompt": prompt},
+                        "deepinfra": {"prompt": prompt},
+                        "together": {"prompt": prompt},
+                    }
+                },
+            },
         )
-        return (interaction.output_text or "").strip()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            try:
+                detail = response.json().get("error", {}).get("message")
+            except (ValueError, AttributeError):
+                detail = None
+            raise RuntimeError(
+                f"OpenRouter STT 回傳 HTTP {response.status_code}：{detail or response.text[:300]}"
+            ) from exc
+        payload = response.json()
+        return str(payload.get("text") or "").strip()
+
+
+def audio_format_from_mime_type(mime_type: str) -> str:
+    clean = mime_type.split(";", 1)[0].lower()
+    formats = {
+        "audio/webm": "webm",
+        "audio/ogg": "ogg",
+        "audio/wav": "wav",
+        "audio/x-wav": "wav",
+        "audio/mpeg": "mp3",
+        "audio/mp4": "m4a",
+        "audio/flac": "flac",
+        "audio/aac": "aac",
+    }
+    return formats.get(clean, "webm")

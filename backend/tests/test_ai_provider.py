@@ -6,7 +6,7 @@ from app.ai_provider import create_ai_services
 from app.config import Settings
 from app.contradiction import GeminiContradictionDetector
 from app.conversation_buffer import Utterance
-from app.stt import GeminiSpeechToText
+from app.stt import OPENROUTER_TRANSCRIPTION_URL, OpenRouterSpeechToText
 
 
 class FakeGeminiInteractions:
@@ -20,8 +20,15 @@ class FakeGeminiInteractions:
 
 
 def test_provider_requires_the_selected_key() -> None:
-    assert create_ai_services(Settings(AI_PROVIDER="openai", OPENAI_API_KEY="")) is None
-    assert create_ai_services(Settings(AI_PROVIDER="gemini", GEMINI_API_KEY="")) is None
+    assert create_ai_services(
+        Settings(AI_PROVIDER="openai", OPENAI_API_KEY="", OPENROUTER_API_KEY="test")
+    ) is None
+    assert create_ai_services(
+        Settings(AI_PROVIDER="gemini", GEMINI_API_KEY="", OPENROUTER_API_KEY="test")
+    ) is None
+    assert create_ai_services(
+        Settings(AI_PROVIDER="gemini", GEMINI_API_KEY="test", OPENROUTER_API_KEY="")
+    ) is None
 
 
 def test_retired_gemini_model_is_migrated() -> None:
@@ -29,17 +36,46 @@ def test_retired_gemini_model_is_migrated() -> None:
     assert settings.gemini_model == "gemini-3.6-flash"
 
 
-def test_gemini_transcribes_inline_audio() -> None:
-    async def scenario() -> None:
-        interactions = FakeGeminiInteractions("會議逐字稿")
-        client = SimpleNamespace(aio=SimpleNamespace(interactions=interactions))
-        transcriber = GeminiSpeechToText(client, "gemini-3.6-flash")
+class FakeHTTPResponse:
+    status_code = 200
+    text = '{"text":"會議逐字稿"}'
 
-        result = await transcriber.transcribe(b"webm audio", "audio/webm;codecs=opus")
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {"text": "會議逐字稿"}
+
+
+class FakeHTTPClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def post(self, url: str, **kwargs):
+        self.calls.append((url, kwargs))
+        return FakeHTTPResponse()
+
+
+def test_openrouter_transcribes_inline_audio_as_chinese() -> None:
+    async def scenario() -> None:
+        client = FakeHTTPClient()
+        transcriber = OpenRouterSpeechToText(client)
+
+        result = await transcriber.transcribe(
+            b"webm audio", "audio/webm;codecs=opus", "前一段提到專案方案甲"
+        )
 
         assert result == "會議逐字稿"
-        assert interactions.calls[0]["model"] == "gemini-3.6-flash"
-        assert interactions.calls[0]["store"] is False
+        url, request = client.calls[0]
+        assert url == OPENROUTER_TRANSCRIPTION_URL
+        payload = request["json"]
+        assert payload["model"] == "openai/whisper-large-v3"
+        assert payload["input_audio"]["format"] == "webm"
+        assert payload["language"] == "zh"
+        assert payload["temperature"] == 0
+        prompt = payload["provider"]["options"]["groq"]["prompt"]
+        assert "台灣繁體中文" in prompt
+        assert "前一段提到專案方案甲" in prompt
 
     asyncio.run(scenario())
 
