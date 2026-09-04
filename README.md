@@ -37,6 +37,8 @@ SITCON Hackathon 2026「Future of Work」專案。Extension 本身極簡：**只
 
 已經安裝過、要取得新版功能時，請按照 [更新教學](update.md) 操作。
 
+想把後端變成大家都能連的正式站（而不是只有你自己電腦上的 `localhost`），可以參考 [用 Cloudflare Tunnel 部署](docs/deploy-cloudflare-tunnel.md)。
+
 所有系統完成安裝後的會議操作都相同：啟動後端、載入 Extension、加入 Meet，再按 Extension 的「開始監聽」。Meet 字幕不需要開啟。
 
 ## 選擇 AI 供應商
