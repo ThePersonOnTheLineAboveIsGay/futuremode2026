@@ -138,6 +138,10 @@ function setMode(mode, meetingId) {
     modeEl.textContent = "";
     return;
   }
-  const label = mode === "microphone" ? "每人麥克風辨識模式" : "音訊辨識模式";
+  const labels = {
+    "microphone+tab-mix": "麥克風＋分頁混音備援模式",
+    microphone: "每人麥克風辨識模式"
+  };
+  const label = labels[mode] || "音訊辨識模式";
   modeEl.textContent = `${label}${meetingId ? ` · ${meetingId}` : ""}`;
 }

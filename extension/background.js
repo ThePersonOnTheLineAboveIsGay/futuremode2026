@@ -43,7 +43,17 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled, displayName }) {
   if (!meetingId) throw new Error("無法從目前網址取得 Meet 會議代碼");
 
   const resolvedName = displayName || (await detectSelfName(tabId));
-  console.info("[Meet AI][background] 開始麥克風語音辨識", { meetingId, websocketUrl, ttsEnabled, displayName: resolvedName });
+  // Mic capture is the primary, named source. Tab-mix audio is a best-effort
+  // backup so participants without the extension are still heard (anonymously)
+  // — if grabbing it fails for any reason, we still proceed on mic alone.
+  let tabStreamId = null;
+  try {
+    tabStreamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+  } catch (error) {
+    console.warn("[Meet AI][background] 無法取得分頁混音備援，僅使用麥克風", error);
+  }
+
+  console.info("[Meet AI][background] 開始語音辨識", { meetingId, websocketUrl, ttsEnabled, displayName: resolvedName, tabMix: Boolean(tabStreamId) });
   await ensureOffscreenDocument();
   const result = await chrome.runtime.sendMessage({
     target: "offscreen",
@@ -51,7 +61,8 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled, displayName }) {
     meetingId,
     websocketUrl,
     ttsEnabled,
-    displayName: resolvedName
+    displayName: resolvedName,
+    tabStreamId
   });
   if (!result?.ok) throw new Error(result?.error || "無法啟動會議監聽");
   await chrome.storage.local.set({
@@ -60,10 +71,10 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled, displayName }) {
     ttsEnabled,
     displayName: resolvedName,
     meetingId,
-    captureMode: "microphone"
+    captureMode: result.tabMix ? "microphone+tab-mix" : "microphone"
   });
   updateBadge(true);
-  return { ok: true, meetingId, captureMode: "microphone" };
+  return { ok: true, meetingId, captureMode: result.tabMix ? "microphone+tab-mix" : "microphone" };
 }
 
 async function detectSelfName(tabId) {
@@ -82,7 +93,7 @@ async function ensureOffscreenDocument() {
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_PATH,
     reasons: ["USER_MEDIA"],
-    justification: "Capture this participant's own microphone for AI-powered Traditional Chinese transcription."
+    justification: "Capture this participant's own microphone, plus a tab-audio fallback for participants without the extension, for AI-powered Traditional Chinese transcription."
   });
 }
 

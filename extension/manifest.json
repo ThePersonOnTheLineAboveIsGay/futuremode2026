@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Meet AI 插話員",
-  "version": "0.3.0",
-  "description": "每人麥克風即時辨識 Google Meet 對話，偵測矛盾、離題與邏輯錯誤；房間可設密碼保護。",
-  "permissions": ["offscreen", "storage"],
+  "version": "0.4.0",
+  "description": "每人麥克風即時辨識 Google Meet 對話，偵測矛盾、離題與邏輯錯誤；分頁混音當備援，涵蓋沒裝套件的與會者。",
+  "permissions": ["offscreen", "storage", "tabCapture"],
   "host_permissions": ["https://meet.google.com/*"],
   "action": { "default_popup": "popup.html", "default_title": "Meet AI 插話員" },
   "background": { "service_worker": "background.js" },
