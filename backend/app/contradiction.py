@@ -14,8 +14,10 @@ SYSTEM_PROMPT = """你是一個謹慎的會議品質監督 AI。你會收到會�
 2. 與會議討論主題明顯無關。
 3. 存在可由逐字稿直接驗證的邏輯或數字錯誤。
 
+當輸入有講者名稱時，只能用「同一位講者」的過往發言判定前後矛盾，絕對不要把不同講者的意見互相比對為矛盾。
+當輸入標示為無講者模式時，不得判定前後矛盾，只能檢查整體離題或可直接驗證的邏輯／數字錯誤。
 避免將正常的意見調整、假設、提問、澄清、補充資訊或語音辨識雜訊誤判為問題。
-只有逐字稿內有清楚證據時才標記；不確定就回報無問題。提醒必須簡短、口語、尊重發言者，並指出可核對的前後內容。"""
+只有逐字稿內有清楚證據時才標記；不確定就回報無問題。提醒必須簡短、口語、尊重發言者，並指出可核對的前後內容。有講者時，提醒句要明確稱呼該講者。"""
 
 
 class InterjectionAnalysis(BaseModel):
@@ -24,6 +26,7 @@ class InterjectionAnalysis(BaseModel):
     explanation: str = Field(max_length=300)
     suggested_interjection: str = Field(max_length=300)
     confidence: float = Field(ge=0, le=1)
+    target_speaker: str | None = None
 
 
 class ContradictionDetector:
@@ -33,17 +36,38 @@ class ContradictionDetector:
 
     async def analyze(self, history: list[Utterance], latest: Utterance) -> InterjectionAnalysis:
         history_text = "\n".join(self._format(item) for item in history) or "（尚無歷史紀錄）"
+        has_speaker = bool(latest.speaker)
+        same_speaker = [item for item in history if has_speaker and item.speaker == latest.speaker]
+        same_speaker_text = "\n".join(self._format(item) for item in same_speaker) or "（沒有）"
+        mode = "有講者模式" if has_speaker else "無講者模式（禁止判定 contradiction）"
         response = await self.client.responses.parse(
             model=self.model,
             input=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"歷史紀錄：\n{history_text}\n\n最新發言：\n{self._format(latest)}"},
+                {
+                    "role": "user",
+                    "content": (
+                        f"分析模式：{mode}\n\n完整歷史紀錄：\n{history_text}\n\n"
+                        f"最新講者的同人歷史：\n{same_speaker_text}\n\n最新發言：\n{self._format(latest)}"
+                    ),
+                },
             ],
             text_format=InterjectionAnalysis,
         )
         if response.output_parsed is None:
             raise ValueError("模型沒有回傳可解析的判斷結果")
-        return response.output_parsed
+        result = response.output_parsed
+        if not has_speaker and result.issue_type == "contradiction":
+            return InterjectionAnalysis(
+                has_issue=False,
+                issue_type="none",
+                explanation="無講者資訊，略過個人前後矛盾判斷。",
+                suggested_interjection="",
+                confidence=0,
+                target_speaker=None,
+            )
+        result.target_speaker = latest.speaker if has_speaker and result.has_issue else None
+        return result
 
     @staticmethod
     def _format(item: Utterance) -> str:

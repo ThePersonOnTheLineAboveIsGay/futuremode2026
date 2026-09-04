@@ -1,12 +1,20 @@
-# Meet AI 插話員
+# Meet AI 插話員 — 團隊版
 
-SITCON Hackathon 2026「Future of Work」MVP：從 Google Meet 分頁擷取音訊，經 OpenAI 語音辨識與語意分析後，在會議畫面即時顯示矛盾、離題或邏輯錯誤提醒。
+SITCON Hackathon 2026「Future of Work」專案。Extension 優先讀取 Google Meet 即時字幕中的講者與文字，後端按會議代碼隔離上下文、偵測同一講者的前後矛盾，再把提醒廣播給同一會議室。提醒同時顯示為 Extension 浮動卡片，並由其中一個 Extension 自動送進 Meet 聊天室，讓沒有安裝 Extension 的與會者也看得到。
 
-## 架構
+## 資料流程
 
-`Chrome Extension → WebSocket → FastAPI → OpenAI STT → 對話 buffer → OpenAI 結構化判斷 → WebSocket → Meet 浮動提示`
+```text
+Meet 字幕 DOM ──講者＋文字──┐
+                           ├─ WebSocket ?meeting_id=... ─ RoomManager
+分頁音訊 ─ STT（字幕備援）──┘                              │
+                                                           ├─ 同房 Extension 浮動卡片
+                                                           └─ 指定一個 client 發 Meet 聊天室
+```
 
-API key 只存在後端 `.env`，不會放進 Extension。
+- 字幕模式：可做同一講者的矛盾、離題及邏輯錯誤判斷。
+- 音訊備援模式：沒有講者資訊，因此禁止判定個人前後矛盾，只檢查整體離題及明顯邏輯／數字錯誤。
+- API key 只存在後端 `.env`，不會放進 Extension。
 
 ## 快速啟動
 
@@ -24,9 +32,63 @@ API key 只存在後端 `.env`，不會放進 Extension。
 
 3. 開啟 <http://localhost:8000/health>，確認 `status: ok` 與 `openai_configured: true`。
 4. Chrome 開啟 `chrome://extensions`，啟用「開發人員模式」，按「載入未封裝項目」，選擇 `extension/`。
-5. 進入 Google Meet，點 Extension 圖示，再按「開始監聽」。
+5. 加入 Google Meet 後，先手動點 Meet 的「顯示字幕／開啟字幕」。這是目前唯一必要的手動步驟。
+6. 點 Extension 圖示，再按「開始監聽」。popup 會顯示會議代碼與目前是「字幕＋講者」或「音訊備援」模式。
 
-停止後再開始時，Chrome 會重新授權目前的 Meet 分頁。若後端不是本機，請在 popup 改填 `wss://.../ws/meeting`，並把該網域加入 `manifest.json` 的 `host_permissions`。
+可先按 popup 的「測試聊天室發送」，它會送出一則清楚標為 `[測試]` 的訊息，用來確認目前 Meet 版本的聊天室 DOM 與帳號權限可用。
+
+若沒有偵測到字幕，頁面會顯示提示並自動改用音訊 STT；字幕稍後出現時會停止上傳音訊，切回字幕模式。
+
+若後端不是本機，請在 popup 改填 `wss://.../ws/meeting`，並把後端網域加入 `manifest.json` 的 `host_permissions`。
+
+## 團隊版行為
+
+### Room 隔離
+
+Extension 從 `https://meet.google.com/xxx-yyyy-zzz` 解析 `xxx-yyyy-zzz`，連到：
+
+```text
+ws://localhost:8000/ws/meeting?meeting_id=xxx-yyyy-zzz
+```
+
+`RoomManager` 為每個會議代碼保存獨立的 buffer、WebSocket 連線、分析節流與聊天室冷卻。同房事件只會送給同房連線；所有連線離開時立即清除 room，沒有新訊息超過 30 分鐘也會清除並關閉閒置連線。
+
+### 廣播與聊天室
+
+同房所有已安裝 Extension 的使用者都會收到浮動卡片。為防止多台裝置把同一提醒重複貼到聊天室，後端只指定一個連線作為聊天室發送端；該連線離開後會自動選下一個。
+
+同一講者 60 秒內只有第一則提醒會送進聊天室，後續判斷仍可廣播浮動卡片。聊天室被主持人停用或 Meet DOM 改版時，Extension 會顯示發送失敗提示。
+
+## WebSocket 訊息
+
+字幕事件：
+
+```json
+{
+  "type": "caption",
+  "meeting_id": "xxx-yyyy-zzz",
+  "speaker": "王小明",
+  "text": "所以我們就照方案 B 開始執行吧",
+  "timestamp": 1735900000
+}
+```
+
+插話事件：
+
+```json
+{
+  "type": "interjection",
+  "meeting_id": "xxx-yyyy-zzz",
+  "target_speaker": "王小明",
+  "issue_type": "contradiction",
+  "explanation": "稍早提到方案 A，現在改為方案 B，未說明原因。",
+  "message": "🤖 AI 提醒：王小明，你稍早提到要用方案 A，現在說的是方案 B，要說明改變原因嗎？",
+  "confidence": 0.82,
+  "send_to_chat": true
+}
+```
+
+`send_to_chat` 只會對同房被選為聊天室發送端的那條連線設為 `true`。
 
 ## 本機開發與測試
 
@@ -41,54 +103,42 @@ pytest backend/tests
 uvicorn app.main:app --app-dir backend --reload
 ```
 
-WebSocket 除了 binary 音訊，也接受文字模式，方便測試：
+WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
 
 ```json
-{"type":"transcript","speaker":"主持人","text":"我們決定採用方案 A，因為成本比較低。"}
+{"type":"transcript","meeting_id":"xxx-yyyy-zzz","speaker":"主持人","text":"我們決定採用方案 A。"}
 ```
 
-隔超過 `ANALYSIS_INTERVAL_SECONDS` 後再送：
+音訊 binary chunk 不含講者，會自動進入無講者判斷模式。
 
-```json
-{"type":"transcript","speaker":"主持人","text":"那我們就直接照方案 B 開始執行。"}
-```
+## 多人 Demo
 
-## Demo 腳本
+準備兩台筆電，或兩個不同帳號的瀏覽器視窗：
 
-1. 先說：「這次專案我們決定用方案 A，因為成本比較低。」
-2. 等待分析節流時間（預設 15 秒）後說：「所以我們就照方案 B 開始執行吧。」
-3. Extension 應顯示「前後矛盾」提示；勾選語音選項時也會唸出提醒。
+1. 裝置 A 安裝 Extension；裝置 B 不安裝，兩者加入同一個 Meet。
+2. 裝置 A 開啟 Meet 字幕，再啟動 Extension。
+3. 主持人說：「這次專案決定用方案 A，因為成本比較低。」
+4. 等待分析節流時間後說：「所以我們就照方案 B 開始執行吧。」
+5. 裝置 A 應顯示針對主持人的浮動卡片。
+6. 裝置 B 應在 Meet 聊天室看到 `🤖 AI 提醒：...`，證明未安裝 Extension 也能收到提醒。
 
-為讓舞台 demo 更快，可將 `.env` 的 `ANALYSIS_INTERVAL_SECONDS=5`。正式使用建議維持 15～20 秒，以降低成本及誤報。
+舞台 demo 可把 `.env` 的 `ANALYSIS_INTERVAL_SECONDS=5`。另開一場不同代碼的 Meet，可確認兩場逐字稿及提醒不會互相出現。
 
-## 設計重點與限制
+## 已知限制
 
-- 每段錄音會重新建立 `MediaRecorder`，讓每個 4 秒 WebM chunk 都有完整容器標頭，較適合直接送 STT。
-- `tabCapture` 會接管分頁聲音；offscreen document 會把音訊接回本機喇叭，並在背景持續錄音。
-- 目前沒有 speaker diarization；所有音訊預設為未知講者。文字測試模式可附 `speaker`。未來可換成具 diarization 的轉錄方案或 Meet Media API。
-- buffer 預設保留最近 15 分鐘、最多 100 句；分析預設每 15 秒至多一次，且信心門檻為 0.7。
-- 會議音訊可能包含敏感資訊。正式部署前應加入使用者同意、資料保留政策、TLS、驗證、速率限制與明確錄音指示。
+- Google Meet 沒有公開穩定的字幕／聊天室 DOM API。Extension 使用多組文字、ARIA 與已知字幕 selector；Meet UI 更新後可能需要調整 `content_script.js`。
+- 聊天室必須允許該使用者傳訊息。主持人關閉聊天、帳號政策限制或輸入框尚未載入時，無法自動發送。
+- 字幕內容會在約 900 ms 沒有更新後才送出，避免逐字增長造成大量重複事件；後端另有 5 秒同講者同文字去重。
+- 這版 room 狀態存在單一 backend process 的記憶體。若水平擴展多個 backend instance，應將 `RoomManager` 換成 Redis pub/sub 與共享狀態。
+- 正式部署前應加入會議參與者同意、TLS、WebSocket 驗證、資料保留政策及速率限制。
 
 ## 專案結構
 
 ```text
-backend/app/       FastAPI、STT、判斷與對話狀態
-backend/tests/     不需 API key 的單元測試
-extension/         Manifest V3 Extension、offscreen 錄音與 Shadow DOM UI
-docker-compose.yml 本機容器啟動
-.env.example       環境變數範本（不含真實金鑰）
-```
-
-## API 訊息格式
-
-Server → Extension：
-
-```json
-{
-  "type": "interjection",
-  "issue_type": "contradiction",
-  "explanation": "先前選 A，現在改說 B，未交代原因。",
-  "message": "剛才提到要用方案 A，現在改成方案 B，要補充一下改變原因嗎？",
-  "confidence": 0.91
-}
+backend/app/main.py                WebSocket 收件與分析流程
+backend/app/room_manager.py        Room 狀態、分組廣播、冷卻與清理
+backend/app/conversation_buffer.py 逐字稿、講者歷史與去重
+backend/app/contradiction.py       有講者／無講者結構化判斷
+extension/content_script.js        字幕監聽、浮動 UI、Meet 聊天室發送
+extension/offscreen.js             Room WebSocket 與音訊備援
 ```

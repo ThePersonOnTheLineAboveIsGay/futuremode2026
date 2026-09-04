@@ -1,5 +1,5 @@
 from app.contradiction import InterjectionAnalysis
-from app.main import should_interject
+from app.main import format_interjection, should_interject
 
 
 def test_interjects_only_above_threshold() -> None:
@@ -23,3 +23,8 @@ def test_none_never_interjects() -> None:
         confidence=1,
     )
     assert not should_interject(no_issue, 0.7)
+
+
+def test_interjection_prefix_and_target_are_enforced() -> None:
+    assert format_interjection("請說明改變原因", "王小明") == "🤖 AI 提醒：王小明，請說明改變原因"
+    assert format_interjection("🤖 AI 提醒：王小明，請說明", "王小明") == "🤖 AI 提醒：王小明，請說明"

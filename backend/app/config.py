@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     analysis_interval_seconds: float = Field(default=15, alias="ANALYSIS_INTERVAL_SECONDS")
     conversation_window_minutes: int = Field(default=15, alias="CONVERSATION_WINDOW_MINUTES")
     conversation_max_utterances: int = Field(default=100, alias="CONVERSATION_MAX_UTTERANCES")
+    room_idle_timeout_minutes: int = Field(default=30, alias="ROOM_IDLE_TIMEOUT_MINUTES")
+    room_cleanup_interval_seconds: int = Field(default=60, alias="ROOM_CLEANUP_INTERVAL_SECONDS")
+    chat_cooldown_seconds: int = Field(default=60, alias="CHAT_COOLDOWN_SECONDS")
     backend_port: int = Field(default=8000, alias="BACKEND_PORT")
     allowed_origins: str = Field(default="*", alias="ALLOWED_ORIGINS")
 

@@ -9,9 +9,11 @@
   <main>
     <div class="brand"><span class="pulse"></span><strong>Meet AI 插話員</strong></div>
     <p id="status">尚未開始監聽</p>
+    <p id="mode"></p>
     <label>後端 WebSocket<input id="url" value="ws://localhost:8000/ws/meeting"></label>
     <label class="toggle"><input id="tts" type="checkbox"><span>語音唸出提醒</span></label>
     <div class="actions"><button id="start">開始監聽</button><button id="stop" class="secondary">停止</button></div>
+    <button id="test-chat" class="secondary test">測試聊天室發送</button>
     <p id="error" role="alert"></p>
   </main>
   <script src="popup.js"></script>

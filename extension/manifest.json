@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meet AI 插話員",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "即時偵測 Google Meet 對話中的矛盾、離題與邏輯錯誤。",
   "permissions": ["activeTab", "offscreen", "scripting", "storage", "tabCapture"],
   "host_permissions": ["https://meet.google.com/*", "http://localhost:8000/*"],
