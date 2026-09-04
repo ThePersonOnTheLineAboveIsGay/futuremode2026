@@ -129,7 +129,9 @@ pip install -r backend\requirements.txt
 python backend/testvoice.py
 ```
 
-它會每 4 秒錄一段麥克風音訊，送到 `openai/whisper-large-v3`，然後即時印出 RMS 音量與辨識文字。RMS 很低代表程式幾乎沒收到你的聲音。
+它會每 6 秒錄一段麥克風音訊，送到 `openai/whisper-large-v3`，然後即時印出 RMS 音量與辨識文字。RMS 很低代表程式幾乎沒收到你的聲音。
+
+中文測試不建議使用 `--seconds 1`。1 秒常只錄到半個詞或半句，Whisper 會回傳空字串或誤判；建議先用預設 6 秒，穩定後再降到 3 秒。
 
 列出麥克風裝置：
 

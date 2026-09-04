@@ -6,16 +6,8 @@ OPENROUTER_STT_MODEL = "openai/whisper-large-v3"
 OPENROUTER_TRANSCRIPTION_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 
 
-def build_chinese_transcription_prompt(context: str = "") -> str:
-    clean_context = " ".join(context.split())[-800:]
-    instructions = (
-        "這是以台灣繁體中文為主的線上會議。請忠實逐字轉寫音訊，使用繁體中文與台灣常用詞彙，"
-        "保留英文專有名詞、產品名稱、數字與單位。不要翻譯成英文，不要摘要，不要解釋，"
-        "不要加入講者名稱或音訊中沒有說出的內容。沒有清楚人聲時只回傳空字串。"
-    )
-    if clean_context:
-        instructions += f" 前一段逐字稿如下，僅用於銜接斷句與專有名詞：{clean_context}"
-    return instructions
+def build_transcription_context(context: str = "") -> str:
+    return " ".join(context.split())[-800:]
 
 
 class OpenRouterSpeechToText:
@@ -29,26 +21,25 @@ class OpenRouterSpeechToText:
         if not audio:
             return ""
         audio_format = audio_format_from_mime_type(mime_type)
-        prompt = build_chinese_transcription_prompt(context)
-        response = await self.client.post(
-            OPENROUTER_TRANSCRIPTION_URL,
-            json={
-                "model": self.model,
-                "input_audio": {
-                    "data": base64.b64encode(audio).decode("ascii"),
-                    "format": audio_format,
-                },
-                "language": "zh",
-                "temperature": 0,
-                "provider": {
-                    "options": {
-                        "groq": {"prompt": prompt},
-                        "deepinfra": {"prompt": prompt},
-                        "together": {"prompt": prompt},
-                    }
-                },
+        payload = {
+            "model": self.model,
+            "input_audio": {
+                "data": base64.b64encode(audio).decode("ascii"),
+                "format": audio_format,
             },
-        )
+            "language": "zh",
+            "temperature": 0,
+        }
+        prompt = build_transcription_context(context)
+        if prompt:
+            payload["provider"] = {
+                "options": {
+                    "groq": {"prompt": prompt},
+                    "deepinfra": {"prompt": prompt},
+                    "together": {"prompt": prompt},
+                }
+            }
+        response = await self.client.post(OPENROUTER_TRANSCRIPTION_URL, json=payload)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

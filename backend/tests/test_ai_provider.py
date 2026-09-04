@@ -74,8 +74,22 @@ def test_openrouter_transcribes_inline_audio_as_chinese() -> None:
         assert payload["language"] == "zh"
         assert payload["temperature"] == 0
         prompt = payload["provider"]["options"]["groq"]["prompt"]
-        assert "台灣繁體中文" in prompt
         assert "前一段提到專案方案甲" in prompt
+
+    asyncio.run(scenario())
+
+
+def test_openrouter_does_not_send_instruction_prompt_without_context() -> None:
+    async def scenario() -> None:
+        client = FakeHTTPClient()
+        transcriber = OpenRouterSpeechToText(client)
+
+        await transcriber.transcribe(b"webm audio", "audio/webm;codecs=opus")
+
+        _, request = client.calls[0]
+        payload = request["json"]
+        assert "provider" not in payload
+        assert payload["language"] == "zh"
 
     asyncio.run(scenario())
 

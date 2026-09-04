@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Continuously record microphone audio and print OpenRouter Whisper transcriptions."
     )
-    parser.add_argument("--seconds", type=float, default=4.0, help="Seconds per recognition chunk.")
+    parser.add_argument("--seconds", type=float, default=6.0, help="Seconds per recognition chunk.")
     parser.add_argument("--device", type=int, default=None, help="Input device index from --list-devices.")
     parser.add_argument("--list-devices", action="store_true", help="List audio devices and exit.")
     parser.add_argument("--silence-rms", type=float, default=0.004, help="RMS below this value is treated as silence.")
@@ -95,6 +95,8 @@ async def run(args: argparse.Namespace) -> int:
     print("testvoice started. Press Ctrl+C to stop.")
     print(f"chunk={args.seconds:.1f}s sample_rate={SAMPLE_RATE}Hz device={args.device or 'default'}")
     print("Speak Mandarin/Taiwan Chinese near the microphone. Each chunk prints RMS and transcript.")
+    if args.seconds < 3:
+        print("WARN: 中文語音不建議低於 3 秒切片；1 秒常只有半個詞或半句，容易空白或誤判。")
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(90.0), headers=headers) as client:
         transcriber = OpenRouterSpeechToText(client)
