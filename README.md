@@ -69,11 +69,13 @@ OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 
 ### Room 隔離
 
-Extension 從 `https://meet.google.com/xxx-yyyy-zzz` 解析 `xxx-yyyy-zzz`，連到：
+Extension 從 `https://meet.google.com/xxx-yyyy-zzz` 解析 `xxx-yyyy-zzz`，附加在你設定的 Server 網址後面連線，例如預設值：
 
 ```text
-ws://localhost:8000/ws/meeting?meeting_id=xxx-yyyy-zzz
+wss://meet.wuzuantw.com/ws/meeting?meeting_id=xxx-yyyy-zzz
 ```
+
+本機開發時把 popup 的 Server 網址改成 `ws://localhost:8000/ws/meeting` 即可。
 
 `RoomManager` 為每個會議代碼保存獨立的 buffer、WebSocket 連線、講者身分、分析節流與聊天室冷卻。同房事件只會送給同房連線；所有連線離開時立即清除 room，沒有新訊息超過 30 分鐘也會清除並關閉閒置連線。
 

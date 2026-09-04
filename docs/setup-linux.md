@@ -137,7 +137,7 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 
 1. 加入 Google Meet。
 2. 不需要開啟 Meet 字幕；系統會擷取你自己的麥克風音訊送給 AI 做繁體中文辨識（第一次按「開始監聽」會跳出瀏覽器的麥克風授權，請允許）。
-3. 打開 Extension，確認 URL 為 `ws://localhost:8000/ws/meeting`；顯示名稱留空即可，系統會嘗試自動偵測。
+3. 打開 Extension，把「後端 Server 網址」改成 `ws://localhost:8000/ws/meeting`（預設值是正式站網址，本機測試自己的後端要改成 localhost）；顯示名稱留空即可，系統會嘗試自動偵測。
 4. 按「開始監聽」。
 5. 確認顯示「每人麥克風辨識模式」。
 6. 按「測試聊天室發送」，確認聊天室出現 `[測試]` 訊息。
