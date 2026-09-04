@@ -276,13 +276,30 @@ async def handle_summarize(
 ) -> None:
     history = rooms.snapshot_history(meeting_id)
     logger.info("[%s] Summarize requested | utterances=%d", meeting_id, len(history))
+    debug_header = f"【Debug 整理結果】\n逐字稿筆數：{len(history)}"
+    if not history:
+        await websocket.send_json({
+            "type": "summary",
+            "meeting_id": meeting_id,
+            "text": f"{debug_header}\n資料狀態：尚未收到可整理的逐字稿。",
+        })
+        return
     try:
         text = await summarizer.summarize(history)
     except Exception as exc:
         logger.exception("Summary failed in room %s", meeting_id)
-        await websocket.send_json({"type": "error", "message": f"整理重點失敗：{exc}"})
+        await websocket.send_json({
+            "type": "summary",
+            "meeting_id": meeting_id,
+            "text": f"{debug_header}\n資料狀態：摘要服務呼叫失敗。\n錯誤：{exc}",
+        })
         return
-    await websocket.send_json({"type": "summary", "meeting_id": meeting_id, "text": text})
+    summary = text or "（摘要服務沒有回傳文字）"
+    await websocket.send_json({
+        "type": "summary",
+        "meeting_id": meeting_id,
+        "text": f"{debug_header}\n資料狀態：已收到逐字稿。\n\n摘要：\n{summary}",
+    })
 
 
 def clean_speaker(value: object) -> str | None:
