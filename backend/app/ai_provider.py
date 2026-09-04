@@ -11,6 +11,7 @@ from .config import Settings
 from .contradiction import ContradictionDetector, GeminiContradictionDetector, InterjectionAnalysis
 from .conversation_buffer import Utterance
 from .stt import OpenRouterSpeechToText
+from .summary import GeminiSummarizer, OpenAISummarizer, Summarizer
 
 
 class Transcriber(Protocol):
@@ -28,6 +29,7 @@ class AIServices:
     provider: str
     transcriber: Transcriber
     detector: Detector
+    summarizer: Summarizer
     stt_client: httpx.AsyncClient
     analysis_client: AsyncOpenAI | genai.Client
 
@@ -59,6 +61,7 @@ def create_ai_services(settings: Settings) -> AIServices | None:
             provider="openai",
             transcriber=transcriber,
             detector=ContradictionDetector(client, settings.llm_model),
+            summarizer=OpenAISummarizer(client, settings.llm_model),
             stt_client=stt_client,
             analysis_client=client,
         )
@@ -68,6 +71,7 @@ def create_ai_services(settings: Settings) -> AIServices | None:
         provider="gemini",
         transcriber=transcriber,
         detector=GeminiContradictionDetector(client, settings.gemini_model),
+        summarizer=GeminiSummarizer(client, settings.gemini_model),
         stt_client=stt_client,
         analysis_client=client,
     )

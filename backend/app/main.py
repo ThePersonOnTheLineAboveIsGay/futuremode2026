@@ -14,6 +14,7 @@ from .ai_provider import AIServices, create_ai_services
 from .config import get_settings
 from .contradiction import InterjectionAnalysis
 from .room_manager import RoomManager
+from .summary import Summarizer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("meet-ai-interrupter")
@@ -44,7 +45,7 @@ async def lifespan(app: FastAPI):
         await app.state.ai_services.close()
 
 
-app = FastAPI(title="Meet AI Interrupter", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Meet AI Interrupter", version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.origin_list,
@@ -69,15 +70,35 @@ async def health() -> dict[str, str | bool]:
 @app.websocket("/ws/meeting")
 async def meeting_socket(websocket: WebSocket) -> None:
     meeting_id = websocket.query_params.get("meeting_id", "").strip().lower()
+    await websocket.accept()
     if not MEETING_ID_PATTERN.fullmatch(meeting_id):
-        await websocket.accept()
         await websocket.send_json({"type": "error", "message": "meeting_id 格式不正確"})
         await websocket.close(code=1008)
         return
 
     rooms: RoomManager = websocket.app.state.rooms
-    await rooms.connect(meeting_id, websocket)
-    logger.info("[%s] Extension connected", meeting_id)
+    join_payload = await receive_join_payload(websocket, meeting_id)
+    if join_payload is None:
+        await websocket.close(code=1008)
+        return
+
+    mime_type = str(join_payload.get("mime_type", "audio/webm"))
+    join_result = await rooms.join(
+        meeting_id,
+        websocket,
+        room_password=join_payload.get("room_password"),
+        display_name=join_payload.get("display_name"),
+    )
+    if not join_result.ok:
+        await websocket.send_json({
+            "type": "error",
+            "code": "invalid_room_password",
+            "message": join_result.reason,
+        })
+        await websocket.close(code=4003)
+        return
+
+    logger.info("[%s] Extension connected | host=%s", meeting_id, join_result.is_host)
     ai_services: AIServices | None = websocket.app.state.ai_services
     if ai_services is None:
         missing = "、".join(settings.missing_api_keys)
@@ -88,9 +109,14 @@ async def meeting_socket(websocket: WebSocket) -> None:
 
     stt = ai_services.transcriber
     detector = ai_services.detector
-    mime_type = "audio/webm"
+    summarizer = ai_services.summarizer
     stt_context: deque[str] = deque(maxlen=4)
 
+    await websocket.send_json({
+        "type": "join_ack",
+        "meeting_id": meeting_id,
+        "is_host": join_result.is_host,
+    })
     await websocket.send_json({"type": "status", "status": "connected", "meeting_id": meeting_id})
     try:
         while True:
@@ -112,6 +138,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
                         mime_type,
                     )
                     text = await stt.transcribe(message["bytes"], mime_type, " ".join(stt_context))
+                    speaker = rooms.participant_name(meeting_id, websocket)
                 except Exception as exc:
                     logger.exception("Audio transcription failed in room %s", meeting_id)
                     await websocket.send_json({"type": "error", "message": f"語音辨識失敗：{exc}"})
@@ -128,6 +155,9 @@ async def meeting_socket(websocket: WebSocket) -> None:
                 if payload.get("type") == "config":
                     mime_type = str(payload.get("mime_type", mime_type))
                     logger.info("[%s] Client configured | audio=%s", meeting_id, mime_type)
+                    continue
+                if payload.get("type") == "summarize":
+                    await handle_summarize(websocket, rooms, summarizer, meeting_id)
                     continue
                 if payload.get("type") == "transcript":
                     text = str(payload.get("text", "")).strip()
@@ -233,6 +263,43 @@ async def meeting_socket(websocket: WebSocket) -> None:
         logger.info("Meeting client disconnected from room %s", meeting_id)
     finally:
         await rooms.disconnect(meeting_id, websocket)
+
+
+async def receive_join_payload(websocket: WebSocket, meeting_id: str) -> dict | None:
+    """Read the first client message; it must be a `config` join handshake."""
+    message = await websocket.receive()
+    if message["type"] == "websocket.disconnect" or message.get("text") is None:
+        await websocket.send_json({"type": "error", "message": "第一則訊息必須是 config 加入請求"})
+        return None
+    try:
+        payload = json.loads(message["text"])
+    except json.JSONDecodeError:
+        await websocket.send_json({"type": "error", "message": "訊息必須是 JSON"})
+        return None
+    if payload.get("type") != "config":
+        await websocket.send_json({"type": "error", "message": "第一則訊息必須是 config 加入請求"})
+        return None
+    if payload.get("meeting_id") not in (None, meeting_id):
+        await websocket.send_json({"type": "error", "message": "訊息 meeting_id 與連線房間不符"})
+        return None
+    return payload
+
+
+async def handle_summarize(
+    websocket: WebSocket,
+    rooms: RoomManager,
+    summarizer: Summarizer,
+    meeting_id: str,
+) -> None:
+    history = rooms.snapshot_history(meeting_id)
+    logger.info("[%s] Summarize requested | utterances=%d", meeting_id, len(history))
+    try:
+        text = await summarizer.summarize(history)
+    except Exception as exc:
+        logger.exception("Summary failed in room %s", meeting_id)
+        await websocket.send_json({"type": "error", "message": f"整理重點失敗：{exc}"})
+        return
+    await websocket.send_json({"type": "summary", "meeting_id": meeting_id, "text": text})
 
 
 def clean_speaker(value: object) -> str | None:

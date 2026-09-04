@@ -26,17 +26,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === "stop-capture") stop();
   if (message.type === "tts-playback-state") setAudioCapture(!message.active);
+  if (message.type === "summarize") {
+    requestSummary();
+    return false;
+  }
   return false;
 });
 
-async function start({ streamId, meetingId, websocketUrl }) {
+async function start({ meetingId, websocketUrl, roomPassword, displayName }) {
   await stop();
   stopping = false;
   activeMeetingId = meetingId;
-  mediaStream = await navigator.mediaDevices.getUserMedia({
-    audio: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId } },
-    video: false
-  });
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   mediaStream.getAudioTracks()[0]?.addEventListener("ended", () => stop(), { once: true });
   audioContext = new AudioContext();
   const source = audioContext.createMediaStreamSource(mediaStream);
@@ -44,17 +45,31 @@ async function start({ streamId, meetingId, websocketUrl }) {
   analyser.fftSize = 2048;
   analyserBuffer = new Float32Array(analyser.fftSize);
   source.connect(analyser);
-  source.connect(audioContext.destination);
   websocket = await connectWebSocket(withMeetingId(websocketUrl, meetingId));
   console.info("[Meet AI][offscreen] WebSocket 已連線", { meetingId, websocketUrl });
   const connectedMeetingId = meetingId;
-  websocket.send(JSON.stringify({ type: "config", meeting_id: meetingId, mime_type: preferredMimeType() }));
+  websocket.send(JSON.stringify({
+    type: "config",
+    meeting_id: meetingId,
+    mime_type: preferredMimeType(),
+    room_password: roomPassword || "",
+    display_name: displayName || ""
+  }));
   websocket.addEventListener("message", handleServerMessage);
   websocket.addEventListener("close", () => chrome.runtime.sendMessage({
     type: "status", status: "disconnected", meeting_id: connectedMeetingId
   }));
   setAudioCapture(true);
   chrome.runtime.sendMessage({ type: "status", status: "listening", meeting_id: meetingId });
+}
+
+function requestSummary() {
+  if (websocket?.readyState !== WebSocket.OPEN) {
+    chrome.runtime.sendMessage({ type: "error", message: "尚未連線到後端，無法整理重點。" });
+    return;
+  }
+  console.info("[Meet AI][offscreen] 要求後端整理重點");
+  websocket.send(JSON.stringify({ type: "summarize", meeting_id: activeMeetingId }));
 }
 
 function withMeetingId(url, meetingId) {
@@ -176,6 +191,10 @@ function handleServerMessage(event) {
   }
   console.info("[Meet AI][offscreen] 收到後端事件", message);
   chrome.runtime.sendMessage(message);
+  if (message.type === "error" && message.code === "invalid_room_password") {
+    console.warn("[Meet AI][offscreen] 房間密碼錯誤，停止監聽");
+    stop();
+  }
 }
 
 async function stop() {

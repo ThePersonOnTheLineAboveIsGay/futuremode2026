@@ -21,7 +21,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return false;
   }
-  if (["interjection", "transcript", "status", "error"].includes(message.type)) {
+  if (message.type === "summarize") {
+    chrome.runtime.sendMessage({ target: "offscreen", type: "summarize" });
+    return false;
+  }
+  if (["interjection", "transcript", "status", "error", "summary", "join_ack"].includes(message.type)) {
     console.info("[Meet AI][background] 後端事件", message);
     forwardToMeetingTab(message);
     if (message.type === "status") {
@@ -33,32 +37,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-async function startCapture({ tabId, websocketUrl, ttsEnabled }) {
+async function startCapture({ tabId, websocketUrl, ttsEnabled, roomPassword, displayName }) {
   const tab = await chrome.tabs.get(tabId);
   const meetingId = meetingIdFromUrl(tab.url);
   if (!meetingId) throw new Error("無法從目前網址取得 Meet 會議代碼");
 
-  console.info("[Meet AI][background] 開始 AI 中文音訊辨識", { meetingId, websocketUrl, ttsEnabled });
+  const resolvedName = displayName || (await detectSelfName(tabId));
+  console.info("[Meet AI][background] 開始麥克風語音辨識", { meetingId, websocketUrl, ttsEnabled, displayName: resolvedName });
   await ensureOffscreenDocument();
-  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
   const result = await chrome.runtime.sendMessage({
     target: "offscreen",
     type: "start-capture",
-    streamId,
     meetingId,
     websocketUrl,
-    ttsEnabled
+    ttsEnabled,
+    roomPassword,
+    displayName: resolvedName
   });
   if (!result?.ok) throw new Error(result?.error || "無法啟動會議監聽");
   await chrome.storage.local.set({
     listening: true,
     websocketUrl,
     ttsEnabled,
+    roomPassword,
+    displayName: resolvedName,
     meetingId,
-    captureMode: "ai-audio"
+    captureMode: "microphone"
   });
   updateBadge(true);
-  return { ok: true, meetingId, captureMode: "ai-audio" };
+  return { ok: true, meetingId, captureMode: "microphone" };
+}
+
+async function detectSelfName(tabId) {
+  try {
+    const result = await chrome.tabs.sendMessage(tabId, { target: "content", type: "detect-name" });
+    return result?.name || "";
+  } catch {
+    return "";
+  }
 }
 
 async function ensureOffscreenDocument() {
@@ -68,7 +84,7 @@ async function ensureOffscreenDocument() {
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_PATH,
     reasons: ["USER_MEDIA"],
-    justification: "Capture meeting tab audio for AI-powered Traditional Chinese transcription."
+    justification: "Capture this participant's own microphone for AI-powered Traditional Chinese transcription."
   });
 }
 

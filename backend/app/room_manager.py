@@ -18,12 +18,21 @@ logger = logging.getLogger("meet-ai-interrupter.rooms")
 @dataclass
 class RoomState:
     buffer: ConversationBuffer
+    password: str | None = None
     connections: set[WebSocket] = field(default_factory=set)
+    participants: dict[WebSocket, str | None] = field(default_factory=dict)
     chat_sender: WebSocket | None = None
     last_activity: float = field(default_factory=monotonic)
     last_analysis_at: float = field(default_factory=lambda: float("-inf"))
     last_chat_by_speaker: dict[str, float] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+@dataclass
+class JoinResult:
+    ok: bool
+    is_host: bool
+    reason: str | None = None
 
 
 class RoomManager:
@@ -55,18 +64,40 @@ class RoomManager:
                 await self._cleanup_task
             self._cleanup_task = None
 
-    async def connect(self, meeting_id: str, websocket: WebSocket) -> RoomState:
-        await websocket.accept()
+    async def join(
+        self,
+        meeting_id: str,
+        websocket: WebSocket,
+        room_password: str | None,
+        display_name: str | None,
+    ) -> JoinResult:
+        clean_password = (room_password or "").strip() or None
+        clean_name = (display_name or "").strip() or None
         async with self._rooms_lock:
             room = self.rooms.get(meeting_id)
+            is_host = room is None
             if room is None:
-                room = RoomState(ConversationBuffer(self.window_minutes, self.max_utterances))
+                room = RoomState(
+                    ConversationBuffer(self.window_minutes, self.max_utterances),
+                    password=clean_password,
+                )
                 self.rooms[meeting_id] = room
+            elif room.password and room.password != clean_password:
+                logger.info("[%s] Join rejected: wrong room password", meeting_id)
+                return JoinResult(ok=False, is_host=False, reason="房間密碼錯誤")
+
             room.connections.add(websocket)
+            room.participants[websocket] = clean_name
             room.chat_sender = room.chat_sender or websocket
             room.last_activity = monotonic()
-            logger.info("[%s] Room clients=%d", meeting_id, len(room.connections))
-            return room
+            logger.info(
+                "[%s] Room clients=%d | host=%s | speaker=%s",
+                meeting_id,
+                len(room.connections),
+                is_host,
+                clean_name or "unknown",
+            )
+            return JoinResult(ok=True, is_host=is_host)
 
     async def disconnect(self, meeting_id: str, websocket: WebSocket) -> None:
         async with self._rooms_lock:
@@ -74,6 +105,7 @@ class RoomManager:
             if room is None:
                 return
             room.connections.discard(websocket)
+            room.participants.pop(websocket, None)
             if room.chat_sender is websocket:
                 room.chat_sender = next(iter(room.connections), None)
             if not room.connections:
@@ -81,6 +113,18 @@ class RoomManager:
                 logger.info("[%s] Room removed (last client disconnected)", meeting_id)
             else:
                 logger.info("[%s] Room clients=%d", meeting_id, len(room.connections))
+
+    def participant_name(self, meeting_id: str, websocket: WebSocket) -> str | None:
+        room = self.rooms.get(meeting_id)
+        if room is None:
+            return None
+        return room.participants.get(websocket)
+
+    def snapshot_history(self, meeting_id: str) -> list[Utterance]:
+        room = self.rooms.get(meeting_id)
+        if room is None:
+            return []
+        return list(room.buffer.items)
 
     async def add_utterance(
         self,

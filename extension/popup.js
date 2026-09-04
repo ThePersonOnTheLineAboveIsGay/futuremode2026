@@ -1,9 +1,12 @@
 const statusEl = document.querySelector("#status");
 const errorEl = document.querySelector("#error");
 const urlEl = document.querySelector("#url");
+const roomPasswordEl = document.querySelector("#room-password");
+const displayNameEl = document.querySelector("#display-name");
 const ttsEl = document.querySelector("#tts");
 const modeEl = document.querySelector("#mode");
 const ttsDiagnosticEl = document.querySelector("#tts-diagnostic");
+const summaryOutputEl = document.querySelector("#summary-output");
 
 init();
 
@@ -11,11 +14,17 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "status") setStatus(message.status !== "disconnected", message.status);
   if (message.type === "error") errorEl.textContent = message.message;
   if (message.type === "tts-diagnostic") showTtsDiagnostic(message.diagnostic);
+  if (message.type === "summary") summaryOutputEl.textContent = message.text || "（沒有內容）";
 });
 
 async function init() {
-  const saved = await chrome.storage.local.get(["listening", "websocketUrl", "ttsEnabled", "backendStatus", "captureMode", "meetingId", "lastTtsDiagnostic"]);
+  const saved = await chrome.storage.local.get([
+    "listening", "websocketUrl", "roomPassword", "displayName", "ttsEnabled",
+    "backendStatus", "captureMode", "meetingId", "lastTtsDiagnostic"
+  ]);
   urlEl.value = saved.websocketUrl || urlEl.value;
+  roomPasswordEl.value = saved.roomPassword || "";
+  displayNameEl.value = saved.displayName || "";
   ttsEl.checked = Boolean(saved.ttsEnabled);
   setStatus(saved.listening, saved.backendStatus);
   setMode(saved.captureMode, saved.meetingId);
@@ -30,7 +39,12 @@ document.querySelector("#start").addEventListener("click", async () => {
     return;
   }
   const result = await chrome.runtime.sendMessage({
-    type: "start-capture", tabId: tab.id, websocketUrl: urlEl.value.trim(), ttsEnabled: ttsEl.checked
+    type: "start-capture",
+    tabId: tab.id,
+    websocketUrl: urlEl.value.trim(),
+    ttsEnabled: ttsEl.checked,
+    roomPassword: roomPasswordEl.value,
+    displayName: displayNameEl.value.trim()
   });
   if (!result?.ok) errorEl.textContent = result?.error || "無法開始監聽";
   else {
@@ -83,6 +97,12 @@ document.querySelector("#test-interjection").addEventListener("click", async () 
   }
 });
 
+document.querySelector("#summarize").addEventListener("click", async () => {
+  errorEl.textContent = "";
+  summaryOutputEl.textContent = "整理中…";
+  await chrome.runtime.sendMessage({ type: "summarize" });
+});
+
 function showTtsDiagnostic(diagnostic) {
   if (!diagnostic?.message) {
     ttsDiagnosticEl.textContent = "";
@@ -104,6 +124,6 @@ function setMode(mode, meetingId) {
     modeEl.textContent = "";
     return;
   }
-  const label = mode === "ai-audio" ? "AI 中文音訊辨識模式" : "音訊辨識模式";
+  const label = mode === "microphone" ? "每人麥克風辨識模式" : "音訊辨識模式";
   modeEl.textContent = `${label}${meetingId ? ` · ${meetingId}` : ""}`;
 }

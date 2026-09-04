@@ -128,10 +128,10 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 ## 6. 第一次 Meet 測試
 
 1. 加入網址類似 `https://meet.google.com/xxx-yyyy-zzz` 的會議。
-2. 不需要開啟 Meet 字幕；系統會把分頁音訊送給 AI 做繁體中文辨識。
-3. 打開 Extension，保留 `ws://localhost:8000/ws/meeting`。
+2. 不需要開啟 Meet 字幕；系統會擷取你自己的麥克風音訊送給 AI 做繁體中文辨識（第一次按「開始監聽」會跳出瀏覽器的麥克風授權，請允許）。
+3. 打開 Extension，保留 `ws://localhost:8000/ws/meeting`；房間密碼與顯示名稱留空即可（單機測試不需要）。
 4. 按「開始監聽」。
-5. 確認 popup 顯示「AI 中文音訊辨識模式」及會議代碼。
+5. 確認 popup 顯示「每人麥克風辨識模式」及會議代碼。
 6. 按「測試聊天室發送」。
 7. Meet 聊天室應出現 `🤖 AI 提醒：[測試] Meet AI 插話員已連接聊天室。`
 

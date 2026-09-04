@@ -136,13 +136,13 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 ## 6. 第一次 Meet 測試
 
 1. 加入 Google Meet。
-2. 不需要開啟 Meet 字幕；系統會把分頁音訊送給 AI 做繁體中文辨識。
-3. 打開 Extension，確認 URL 為 `ws://localhost:8000/ws/meeting`。
+2. 不需要開啟 Meet 字幕；系統會擷取你自己的麥克風音訊送給 AI 做繁體中文辨識（第一次按「開始監聽」會跳出瀏覽器的麥克風授權，請允許）。
+3. 打開 Extension，確認 URL 為 `ws://localhost:8000/ws/meeting`；房間密碼與顯示名稱留空即可（單機測試不需要）。
 4. 按「開始監聽」。
-5. 確認顯示「AI 中文音訊辨識模式」。
+5. 確認顯示「每人麥克風辨識模式」。
 6. 按「測試聊天室發送」，確認聊天室出現 `[測試]` 訊息。
 
-若使用 Chromium，必須確認該版本支援 Manifest V3、`chrome.offscreen` 與 `tabCapture`。
+若使用 Chromium，必須確認該版本支援 Manifest V3、`chrome.offscreen` 與麥克風權限（`getUserMedia`）。
 
 ## 7. Demo 建議設定
 
@@ -198,11 +198,12 @@ Ubuntu／Debian 通常需要：
 sudo apt install python3-venv
 ```
 
-### Chrome 無法擷取分頁音訊
+### Chrome 無法擷取麥克風音訊
 
 - 優先使用最新版正式版 Google Chrome。
-- 確認網站音訊沒有被瀏覽器或桌面環境靜音。
-- Wayland／PipeWire 環境若有問題，可先確認瀏覽器本身能正常播放 Meet 音訊。
+- 第一次按「開始監聽」會跳出瀏覽器的麥克風授權，請確認允許；若不小心拒絕，需要到 Chrome 的網站設定重新開放。
+- 確認系統層級的麥克風沒有被靜音，且沒有其他程式獨占裝置。
+- Wayland／PipeWire 環境若有問題，可先確認瀏覽器本身能正常用麥克風（例如 `chrome://settings/content/microphone`）。
 - 系統偵測到語音段落後才會上傳音訊給 OpenRouter STT；音訊擷取、偵測門檻或網路問題會直接影響辨識。
 
 ### 後端或 Extension 連不上

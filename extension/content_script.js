@@ -69,6 +69,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(result);
     return false;
   }
+  if (message.type === "summary") {
+    debugLog("收到重點整理", message);
+    showSummary(message.text);
+  }
+  if (message.type === "detect-name") {
+    const name = detectSelfName();
+    debugLog("偵測本人顯示名稱", { name });
+    sendResponse({ name });
+    return false;
+  }
   return false;
 });
 
@@ -82,6 +92,48 @@ function showInterjection(message) {
   card.classList.add("show");
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => card.classList.remove("show"), 12000);
+}
+
+function showSummary(text) {
+  root.querySelector(".badge").textContent = "重點整理";
+  root.querySelector(".confidence").textContent = "";
+  root.querySelector(".target").textContent = "";
+  root.querySelector(".message").textContent = text || "目前還沒有足夠內容可以整理重點。";
+  root.querySelector(".explanation").textContent = "";
+  card.classList.add("show");
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => card.classList.remove("show"), 20000);
+}
+
+function detectSelfName() {
+  const selectors = [
+    '[data-self-name]',
+    '[data-participant-id][data-self-participant]',
+    '[aria-label$="(You)"]',
+    '[aria-label$="(你)"]',
+    '[aria-label$="(自己)"]'
+  ];
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    const label = element?.getAttribute("data-self-name") || element?.getAttribute("aria-label") || element?.textContent;
+    const name = cleanSelfNameLabel(label);
+    if (name) return name;
+  }
+  const candidates = Array.from(document.querySelectorAll("[aria-label], [data-tooltip]"));
+  for (const element of candidates) {
+    const label = element.getAttribute("aria-label") || element.getAttribute("data-tooltip") || "";
+    if (/\(you\)|\(你\)|\(自己\)/i.test(label)) {
+      const name = cleanSelfNameLabel(label);
+      if (name) return name;
+    }
+  }
+  return null;
+}
+
+function cleanSelfNameLabel(label) {
+  if (!label) return null;
+  const name = label.replace(/\((you|你|自己)\)/i, "").trim();
+  return name || null;
 }
 
 function speakInterjection(text) {

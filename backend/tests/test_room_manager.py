@@ -26,9 +26,9 @@ def test_room_broadcast_isolated_and_single_chat_sender() -> None:
         first = FakeWebSocket()
         second = FakeWebSocket()
         other_room = FakeWebSocket()
-        await manager.connect("aaa-bbbb-ccc", first)
-        await manager.connect("aaa-bbbb-ccc", second)
-        await manager.connect("xxx-yyyy-zzz", other_room)
+        await manager.join("aaa-bbbb-ccc", first, room_password="", display_name=None)
+        await manager.join("aaa-bbbb-ccc", second, room_password="", display_name=None)
+        await manager.join("xxx-yyyy-zzz", other_room, room_password="", display_name=None)
 
         await manager.broadcast("aaa-bbbb-ccc", {"type": "interjection"}, allow_chat=True)
 
@@ -44,7 +44,8 @@ def test_chat_cooldown_and_room_cleanup() -> None:
     async def scenario() -> None:
         manager = RoomManager(15, 100, idle_timeout_seconds=10)
         socket = FakeWebSocket()
-        room = await manager.connect("aaa-bbbb-ccc", socket)
+        await manager.join("aaa-bbbb-ccc", socket, room_password="", display_name=None)
+        room = manager.rooms["aaa-bbbb-ccc"]
         assert await manager.reserve_chat_slot("aaa-bbbb-ccc", "王小明", 60)
         assert not await manager.reserve_chat_slot("aaa-bbbb-ccc", "王小明", 60)
         room.last_activity = 0
@@ -63,8 +64,8 @@ def test_room_buffers_do_not_cross_contaminate() -> None:
         manager = RoomManager(15, 100, idle_timeout_seconds=60)
         first = FakeWebSocket()
         second = FakeWebSocket()
-        await manager.connect("aaa-bbbb-ccc", first)
-        await manager.connect("xxx-yyyy-zzz", second)
+        await manager.join("aaa-bbbb-ccc", first, room_password="", display_name=None)
+        await manager.join("xxx-yyyy-zzz", second, room_password="", display_name=None)
         now = datetime.now(timezone.utc)
 
         await manager.add_utterance("aaa-bbbb-ccc", "Room A", "Alice", now, "caption", 0)
@@ -75,5 +76,28 @@ def test_room_buffers_do_not_cross_contaminate() -> None:
         await manager.disconnect("aaa-bbbb-ccc", first)
         assert "aaa-bbbb-ccc" not in manager.rooms
         assert "xxx-yyyy-zzz" in manager.rooms
+
+    asyncio.run(scenario())
+
+
+def test_room_password_protects_join() -> None:
+    async def scenario() -> None:
+        manager = RoomManager(15, 100, idle_timeout_seconds=60)
+        host = FakeWebSocket()
+        wrong = FakeWebSocket()
+        guest = FakeWebSocket()
+
+        host_result = await manager.join("aaa-bbbb-ccc", host, room_password="秘密", display_name="主持人")
+        assert host_result.ok and host_result.is_host
+
+        wrong_result = await manager.join("aaa-bbbb-ccc", wrong, room_password="錯的", display_name="路人")
+        assert not wrong_result.ok
+        assert wrong_result.reason == "房間密碼錯誤"
+        assert wrong not in manager.rooms["aaa-bbbb-ccc"].connections
+
+        guest_result = await manager.join("aaa-bbbb-ccc", guest, room_password="秘密", display_name="小美")
+        assert guest_result.ok and not guest_result.is_host
+        assert manager.participant_name("aaa-bbbb-ccc", guest) == "小美"
+        assert manager.participant_name("aaa-bbbb-ccc", host) == "主持人"
 
     asyncio.run(scenario())
