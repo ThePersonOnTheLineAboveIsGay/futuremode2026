@@ -14,7 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from .ai_provider import AIServices, create_ai_services
 from .config import get_settings
 from .contradiction import InterjectionAnalysis
+from .diarization import extract_embedding
 from .room_manager import RoomManager
+from .stt import audio_format_from_mime_type
 from .summary import Summarizer
 
 logging.basicConfig(level=logging.INFO)
@@ -143,6 +145,18 @@ async def meeting_socket(websocket: WebSocket) -> None:
                 )
                 text = await stt.transcribe(message["bytes"], mime_type, " ".join(stt_context))
                 speaker = rooms.participant_name(meeting_id, websocket)
+                if not speaker and text:
+                    # No known identity for this connection (anonymous
+                    # tab-mix, or a mic whose display name wasn't set) — try
+                    # to at least tell different voices apart within the
+                    # room instead of blurring everyone into one source.
+                    # Best-effort: falls back to fully anonymous if the
+                    # optional diarization dependencies aren't installed.
+                    embedding = await asyncio.to_thread(
+                        extract_embedding, message["bytes"], audio_format_from_mime_type(mime_type)
+                    )
+                    if embedding is not None:
+                        speaker = await rooms.match_anonymous_speaker(meeting_id, embedding)
             except Exception as exc:
                 logger.exception("Audio transcription failed in room %s", meeting_id)
                 await safe_send_json(websocket, {"type": "error", "message": f"語音辨識失敗：{exc}"})
@@ -244,7 +258,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
                         "[%s] Interjection suppressed as duplicate of an already-reported issue", meeting_id
                     )
                 else:
-                    message_text = format_interjection(result.suggested_interjection, result.target_speaker)
+                    message_text = format_interjection(result.suggested_interjection)
                     allow_chat = await rooms.reserve_chat_slot(
                         meeting_id, result.target_speaker, settings.chat_cooldown_seconds
                     )
@@ -386,12 +400,16 @@ def parse_timestamp(value: object) -> datetime:
     return timestamp
 
 
-def format_interjection(message: str, target_speaker: str | None) -> str:
+def format_interjection(message: str) -> str:
+    """Normalizes the "🤖 AI 提醒：" prefix only. Who it's about is carried
+    separately by target_speaker (shown in the floating card's own "對象："
+    field) — this text is also what gets posted verbatim into Meet chat, so
+    it deliberately never names anyone (the system prompt instructs the
+    model's own suggested_interjection to stay name-free for the same
+    reason)."""
     clean = message.strip()
     if clean.startswith("🤖 AI 提醒："):
         clean = clean.removeprefix("🤖 AI 提醒：").strip()
-    if target_speaker and target_speaker not in clean:
-        clean = f"{target_speaker}，{clean}"
     return f"🤖 AI 提醒：{clean}"
 
 

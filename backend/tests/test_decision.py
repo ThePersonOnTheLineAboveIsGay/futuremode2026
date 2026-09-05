@@ -37,6 +37,9 @@ def test_none_never_interjects() -> None:
     assert not should_interject(no_issue)
 
 
-def test_interjection_prefix_and_target_are_enforced() -> None:
-    assert format_interjection("請說明改變原因", "王小明") == "🤖 AI 提醒：王小明，請說明改變原因"
-    assert format_interjection("🤖 AI 提醒：王小明，請說明", "王小明") == "🤖 AI 提醒：王小明，請說明"
+def test_interjection_prefix_is_normalized_and_never_names_anyone() -> None:
+    # target_speaker is carried separately (the floating card's own "對象："
+    # field) — the message text itself, which also gets posted verbatim into
+    # Meet chat, must never have a name spliced into it.
+    assert format_interjection("請說明改變原因") == "🤖 AI 提醒：請說明改變原因"
+    assert format_interjection("🤖 AI 提醒：請說明改變原因") == "🤖 AI 提醒：請說明改變原因"

@@ -161,6 +161,35 @@ def test_register_issue_if_new_deduplicates_similar_wording() -> None:
     asyncio.run(scenario())
 
 
+def test_match_anonymous_speaker_clusters_similar_voices_and_splits_different_ones() -> None:
+    async def scenario() -> None:
+        manager = RoomManager(15, 100, idle_timeout_seconds=60)
+        socket = FakeWebSocket()
+        await manager.join("aaa-bbbb-ccc", socket, display_name=None)
+
+        voice_a1 = [1.0, 0.0, 0.0]
+        voice_a2 = [0.95, 0.05, 0.0]  # near-identical direction to voice_a1
+        voice_b = [0.0, 1.0, 0.0]  # orthogonal -> clearly a different voice
+
+        label_a1 = await manager.match_anonymous_speaker("aaa-bbbb-ccc", voice_a1)
+        label_a2 = await manager.match_anonymous_speaker("aaa-bbbb-ccc", voice_a2)
+        label_b = await manager.match_anonymous_speaker("aaa-bbbb-ccc", voice_b)
+
+        assert label_a1 == "匿名講者1"
+        assert label_a2 == "匿名講者1"  # similar enough to cluster with the first
+        assert label_b == "匿名講者2"  # different voice gets its own label
+
+    asyncio.run(scenario())
+
+
+def test_match_anonymous_speaker_returns_none_for_unknown_room() -> None:
+    async def scenario() -> None:
+        manager = RoomManager(15, 100, idle_timeout_seconds=60)
+        assert await manager.match_anonymous_speaker("no-such-room", [1.0, 0.0]) is None
+
+    asyncio.run(scenario())
+
+
 def test_join_tracks_participant_display_names() -> None:
     async def scenario() -> None:
         manager = RoomManager(15, 100, idle_timeout_seconds=60)

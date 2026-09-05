@@ -74,6 +74,10 @@ async function startCapture({ tabId, websocketUrl, ttsEnabled, displayName }) {
     captureMode: result.tabMix ? "microphone+tab-mix" : "microphone"
   });
   updateBadge(true);
+  // Open Meet's chat panel proactively now, rather than waiting for the first
+  // interjection to open it under time pressure (best-effort — sendMeetChatMessage
+  // still opens it on demand if this doesn't stick, e.g. the user later closes it).
+  chrome.tabs.sendMessage(tabId, { target: "content", type: "ensure-chat-open" }).catch(() => {});
   return { ok: true, meetingId, captureMode: result.tabMix ? "microphone+tab-mix" : "microphone" };
 }
 

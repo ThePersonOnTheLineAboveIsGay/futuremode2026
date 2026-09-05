@@ -1,11 +1,26 @@
 {
   "manifest_version": 3,
-  "name": "Meet AI 插話員",
+  "name": "Meet 會議小甜心",
   "version": "0.4.0",
   "description": "每人麥克風即時辨識 Google Meet 對話，偵測矛盾、離題與邏輯錯誤；分頁混音當備援，涵蓋沒裝套件的與會者。",
   "permissions": ["offscreen", "storage", "tabCapture"],
   "host_permissions": ["https://meet.google.com/*"],
-  "action": { "default_popup": "popup.html", "default_title": "Meet AI 插話員" },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Meet 會議小甜心",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {

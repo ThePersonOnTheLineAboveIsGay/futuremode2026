@@ -121,7 +121,7 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 2. 開啟右上角「開發人員模式」。
 3. 點「載入未封裝項目」。
 4. 選擇專案中的 `extension` 資料夾。
-5. 將 Meet AI 插話員釘選到 Chrome 工具列。
+5. 將 Meet 會議小甜心釘選到 Chrome 工具列。
 
 程式更新後，要在 `chrome://extensions` 按重新載入，並重新整理 Meet 分頁。
 
@@ -133,7 +133,7 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 4. 按「開始監聽」。
 5. 確認 popup 顯示「麥克風＋分頁混音備援模式」及會議代碼（分頁混音取得失敗時會顯示「每人麥克風辨識模式」，只用麥克風也能運作）。
 6. 按「測試聊天室發送」。
-7. Meet 聊天室應出現 `🤖 AI 提醒：[測試] Meet AI 插話員已連接聊天室。`
+7. Meet 聊天室應出現 `🤖 AI 提醒：[測試] Meet 會議小甜心已連接聊天室。`
 
 開始後請對著 Meet 說一句完整中文；停頓後 PowerShell 應出現 `AI audio chunk received` 與 `source=stt`。系統使用智慧語音採樣，安靜時不會固定送出音訊。
 

@@ -1,0 +1,25 @@
+# Optional: anonymous speaker clustering (backend/app/diarization.py).
+#
+# Without this installed, the backend runs exactly as before — anonymous
+# (tab-mix) utterances just stay unlabeled. Nothing else depends on it.
+#
+# resemblyzer's own PyPI metadata requires the real "webrtcvad" package,
+# which needs a C compiler (MSVC Build Tools) to build from source on
+# Windows. webrtcvad-wheels below ships a prebuilt Windows wheel under the
+# same importable module name, so resemblyzer must be installed with
+# --no-deps and its actual runtime dependencies covered by this file instead:
+#
+#   pip install --no-deps resemblyzer
+#   pip install -r backend/requirements-diarization.txt
+#
+# Also requires ffmpeg on PATH (used by pydub to decode webm/opus audio) —
+# install it separately (e.g. `winget install ffmpeg` / `choco install
+# ffmpeg` / your distro's package manager). Missing ffmpeg degrades the
+# same way as not installing this file at all: no crash, just no labels.
+webrtcvad-wheels==2.0.14
+librosa==0.11.0
+numpy==2.4.6
+scipy==1.17.1
+torch==2.14.0
+pydub==0.25.1
+typing==3.7.4.3

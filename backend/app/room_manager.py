@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import logging
+import math
 import re
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -22,9 +23,45 @@ logger = logging.getLogger("meet-ai-interrupter.rooms")
 # different wording doesn't count as a new topic.
 SIMILAR_ISSUE_RATIO = 0.6
 
+# An anonymous utterance's voice embedding is folded into an existing
+# pseudo-speaker once cosine similarity to that speaker's running centroid
+# reaches this — see match_anonymous_speaker. Diarization only clusters
+# already-VAD-cut utterances (turn-taking), it cannot split overlapping
+# speech within one segment.
+#
+# Short, opus-compressed meeting-audio clips give resemblyzer noticeably less
+# to work with than the multi-second reference clips it's normally validated
+# on, so different real speakers can still land above a low threshold here —
+# 0.75 was found to merge everyone into "匿名講者1" in practice. Biased
+# higher on purpose: splitting one real person into two labels is a much
+# smaller loss than merging several different people into one.
+ANONYMOUS_SPEAKER_MATCH_THRESHOLD = 0.88
+
+# Pseudo-label prefix for clustered anonymous speakers ("匿名講者1", "匿名講者2",
+# ...). This is an internal grouping key only — contradiction.py must never
+# let it reach the model's prompt text or any user-facing output, since it's
+# not a real identity, just a same-voice-probably grouping.
+ANONYMOUS_SPEAKER_LABEL_PREFIX = "匿名講者"
+
 
 def _normalize_issue_topic(topic: str) -> str:
     return re.sub(r"\s+", "", topic.lower())[:200]
+
+
+@dataclass
+class SpeakerProfile:
+    label: str
+    centroid: list[float]
+    count: int = 1
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 @dataclass
@@ -45,6 +82,11 @@ class RoomState:
     # register_issue_if_new's fuzzy dedup and for feeding back into the
     # analysis prompt so the model itself avoids re-flagging the same thing.
     reported_issues: list[str] = field(default_factory=list)
+    # Voice-embedding clusters for anonymous (tab-mix) utterances — lets
+    # multiple people sharing one anonymous audio source get distinct
+    # "匿名講者N" labels instead of all blurring into one unattributed blob.
+    # See match_anonymous_speaker.
+    anonymous_speaker_profiles: list[SpeakerProfile] = field(default_factory=list)
     # Unpruned, whole-meeting log for the summarize feature. `buffer` above is a
     # rolling window scoped to contradiction analysis and must stay that way.
     full_history: list[Utterance] = field(default_factory=list)
@@ -188,6 +230,49 @@ class RoomManager:
                     return False
             room.reported_issues.append(topic)
             return True
+
+    async def match_anonymous_speaker(self, meeting_id: str, embedding: list[float]) -> str | None:
+        """Cluster an anonymous utterance's voice embedding against this
+        room's known anonymous speakers, returning a stable pseudo-label
+        ("匿名講者1", "匿名講者2", ...) instead of every anonymous voice
+        blurring into one unattributed source. Turn-taking only: this runs
+        per already-VAD-cut utterance, so simultaneous/overlapping speech
+        within one segment isn't separated."""
+        room = self.rooms.get(meeting_id)
+        if room is None:
+            return None
+        async with room.lock:
+            best_profile: SpeakerProfile | None = None
+            best_similarity = -1.0
+            for profile in room.anonymous_speaker_profiles:
+                similarity = _cosine_similarity(embedding, profile.centroid)
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_profile = profile
+            if best_profile is not None and best_similarity >= ANONYMOUS_SPEAKER_MATCH_THRESHOLD:
+                logger.info(
+                    "[%s] Anonymous speaker matched %s | similarity=%.3f (threshold=%.2f)",
+                    meeting_id,
+                    best_profile.label,
+                    best_similarity,
+                    ANONYMOUS_SPEAKER_MATCH_THRESHOLD,
+                )
+                best_profile.count += 1
+                n = best_profile.count
+                best_profile.centroid = [
+                    (existing * (n - 1) + new) / n for existing, new in zip(best_profile.centroid, embedding)
+                ]
+                return best_profile.label
+            label = f"{ANONYMOUS_SPEAKER_LABEL_PREFIX}{len(room.anonymous_speaker_profiles) + 1}"
+            logger.info(
+                "[%s] New anonymous speaker %s | best_similarity=%.3f (threshold=%.2f)",
+                meeting_id,
+                label,
+                best_similarity,
+                ANONYMOUS_SPEAKER_MATCH_THRESHOLD,
+            )
+            room.anonymous_speaker_profiles.append(SpeakerProfile(label=label, centroid=list(embedding)))
+            return label
 
     async def reserve_chat_slot(self, meeting_id: str, speaker: str | None, cooldown_seconds: float) -> bool:
         room = self.rooms.get(meeting_id)

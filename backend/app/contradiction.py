@@ -7,6 +7,7 @@ from google import genai
 from pydantic import BaseModel, Field
 
 from .conversation_buffer import Utterance
+from .room_manager import ANONYMOUS_SPEAKER_LABEL_PREFIX
 
 
 SYSTEM_PROMPT = """你是積極參與會議討論的 AI 顧問，不是只挑錯、不表態的旁觀者。你會收到會議逐字稿的歷史紀錄與最新一段發言。
@@ -25,7 +26,7 @@ SYSTEM_PROMPT = """你是積極參與會議討論的 AI 顧問，不是只挑錯
 當輸入有講者名稱時，只能用「同一位講者」的過往發言判定前後矛盾，絕對不要把不同講者的意見互相比對為矛盾。
 當輸入標示為 AI 音訊模式且沒有講者名稱時，可以指出「會議內容」前後不一致，但不得猜測或指名是哪一位講者；target_speaker 必須為 null。
 避免把單純的寒暄、跟討論主題完全無關的閒聊、或語音辨識雜訊誤判為問題；除此之外，只要你判斷有不合理或值得表態的地方，就應該提出來，不要因為「這只是意見交流」或「沒有明確矛盾」而略過不表態。
-只有逐字稿內有清楚證據支持你的判斷時才標記；證據不足就回報無問題。提醒必須簡短、直接、講重點：不要用「不好意思」、「抱歉」這類開場白或客套話，也不用刻意婉轉，直接講出問題或意見就好；語氣不用攻擊性或指責，但不需要刻意禮貌鋪陳。讓人清楚知道這是 AI 的參考意見，最終決定權在團隊手上。有講者時，提醒句要明確稱呼該講者。
+只有逐字稿內有清楚證據支持你的判斷時才標記；證據不足就回報無問題。提醒必須簡短、直接、講重點：不要用「不好意思」、「抱歉」這類開場白或客套話，也不用刻意婉轉，直接講出問題或意見就好；語氣不用攻擊性或指責，但不需要刻意禮貌鋪陳。讓人清楚知道這是 AI 的參考意見，最終決定權在團隊手上。suggested_interjection 這句話本身**絕對不要**稱呼或提到任何人名（不管是真名還是任何形式的講者代稱）——是誰的對象資訊已經由 target_speaker 欄位單獨承載，提醒句只講內容本身，直接切入問題或意見就好。
 
 reasons 欄位用條列方式列出 1～3 點具體理由（每點一句話、講重點，不要寫成長段落）。quote 欄位填入最新發言逐字稿中，最能支持你判斷的那一小段原文，必須逐字照抄、不可改寫或摘要；如果整段最新發言都相關，就照抄整段。
 
@@ -120,12 +121,25 @@ def build_analysis_prompt(
     )
 
 
+def is_pseudo_anonymous_speaker(speaker: str | None) -> bool:
+    """True for a diarization pseudo-label ("匿名講者3") — a same-voice-
+    probably grouping key, not a verified real identity. Used to keep that
+    label out of anything the model reads or anything shown to a human."""
+    return bool(speaker) and speaker.startswith(ANONYMOUS_SPEAKER_LABEL_PREFIX)
+
+
 def normalize_analysis(result: InterjectionAnalysis, latest: Utterance) -> InterjectionAnalysis:
     has_speaker = bool(latest.speaker)
-    result.target_speaker = latest.speaker if has_speaker and result.has_issue else None
+    is_real_identity = has_speaker and not is_pseudo_anonymous_speaker(latest.speaker)
+    result.target_speaker = latest.speaker if is_real_identity and result.has_issue else None
     return result
 
 
 def format_utterance(item: Utterance) -> str:
     local_time = item.timestamp.astimezone().strftime("%H:%M:%S")
-    return f"[{local_time}] {item.speaker or '未知講者'}：{item.text}"
+    # A diarization pseudo-label is an internal grouping key, not a real name
+    # the model should ever see or repeat back in its own wording — same-
+    # speaker grouping still works via code-level equality on item.speaker
+    # in build_analysis_prompt, entirely independent of what's printed here.
+    display_speaker = item.speaker if item.speaker and not is_pseudo_anonymous_speaker(item.speaker) else "未知講者"
+    return f"[{local_time}] {display_speaker}：{item.text}"

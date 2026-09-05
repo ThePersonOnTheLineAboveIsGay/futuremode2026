@@ -1,4 +1,4 @@
-# Meet AI 插話員：更新教學
+# Meet 會議小甜心：更新教學
 
 這份文件適用於已經安裝過專案的人。更新時要同時更新後端與 Chrome Extension；只做其中一邊，可能會因訊息格式不同而無法正常運作。
 
@@ -89,7 +89,7 @@ docker compose logs -f backend
 Chrome 不會自動套用本機 Extension 的新版程式碼：
 
 1. 開啟 `chrome://extensions`。
-2. 找到「Meet AI 插話員」。
+2. 找到「Meet 會議小甜心」。
 3. 按卡片上的重新載入按鈕。這個版本新增了 `tabCapture` 權限（分頁混音備援用），Chrome 可能會跳出「新權限」提示，按允許即可，這不是安全警告，是預期的變更。
 4. 回到 Google Meet，重新整理整個 Meet 分頁。
 5. 開啟 Extension，勾選「語音唸出提醒」，再按「開始監聽」；不需要開啟 Meet 字幕。

@@ -22,20 +22,25 @@ root.innerHTML = `
     button { border:0; cursor:pointer; color:#e5e7eb; }
     .close { position:absolute; right:8px; top:8px; background:transparent; font-size:18px; }
     .ignore { margin-top:12px; padding:5px 10px; border-radius:7px; background:#374151; font-size:12px; }
+    .stop-voice { margin-top:12px; margin-left:8px; padding:5px 10px; border-radius:7px; background:#7f1d1d; font-size:12px; display:none; }
+    .stop-voice.show { display:inline-block; }
   </style>
   <aside class="card" role="alert" aria-live="assertive">
     <button class="close" aria-label="關閉">×</button>
     <div class="top"><span class="badge"></span><span class="confidence"></span></div>
     <div class="target"></div><div class="message"></div><ul class="reasons"></ul><div class="quote"></div>
     <button class="ignore">忽略</button>
+    <button class="stop-voice">🔇 停止語音</button>
   </aside>
   <aside class="notice" role="status"><button class="close" aria-label="關閉">×</button><span></span></aside>`;
 
 const card = root.querySelector(".card");
 const notice = root.querySelector(".notice");
+const stopVoiceButton = root.querySelector(".stop-voice");
 root.querySelectorAll(".close, .ignore").forEach((button) => {
   button.addEventListener("click", () => button.closest("aside").classList.remove("show"));
 });
+stopVoiceButton.addEventListener("click", stopSpeaking);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target !== "content") return false;
@@ -53,7 +58,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   }
   if (message.type === "test-chat") {
-    sendMeetChatMessage("🤖 AI 提醒：[測試] Meet AI 插話員已連接聊天室。")
+    sendMeetChatMessage("🤖 AI 提醒：[測試] Meet 會議小甜心已連接聊天室。")
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
@@ -97,11 +102,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ name });
     return false;
   }
+  if (message.type === "stop-voice") {
+    stopSpeaking();
+    return false;
+  }
+  if (message.type === "ensure-chat-open") {
+    // Proactively open Meet's chat panel as soon as capture starts, so the
+    // first real interjection doesn't have to open it under time pressure
+    // (and doesn't surprise the user with the panel popping open mid-meeting).
+    ensureChatPanelOpen()
+      .then(() => debugLog("已預先開啟聊天室面板"))
+      .catch((error) => debugLog("預先開啟聊天室面板失敗，稍後發送時會再嘗試", error.message));
+    return false;
+  }
   return false;
 });
 
 function showInterjection(message) {
-  const labels = { contradiction: "前後矛盾", off_topic: "可能離題", logical_error: "邏輯錯誤", decision_review: "方案評估" };
+  const labels = { contradiction: "提醒", off_topic: "偏題", logical_error: "重點", decision_review: "建議" };
   root.querySelector(".badge").textContent = labels[message.issue_type] || "AI 提醒";
   root.querySelector(".confidence").textContent = `${Math.round((message.confidence || 0) * 100)}% 信心`;
   root.querySelector(".target").textContent = message.target_speaker ? `對象：${message.target_speaker}` : "整體會議提醒";
@@ -167,6 +185,13 @@ function cleanSelfNameLabel(label) {
   return name || null;
 }
 
+function stopSpeaking() {
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  stopVoiceButton.classList.remove("show");
+  chrome.runtime.sendMessage({ type: "tts-playback-state", active: false });
+  debugLog("使用者手動停止語音播放");
+}
+
 function speakInterjection(text) {
   if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
     const error = "此 Chrome 環境不支援 Web Speech 語音合成。";
@@ -198,20 +223,27 @@ function speakInterjection(text) {
     chrome.runtime.sendMessage({ type: "tts-playback-state", active: true });
     publishTtsDiagnostic("playing", `正在播放，語音：${environment.selectedVoice}`, environment);
     debugLog("語音開始播放", environment);
+    stopVoiceButton.classList.add("show");
   };
   utterance.onend = () => {
     finished = true;
     chrome.runtime.sendMessage({ type: "tts-playback-state", active: false });
     publishTtsDiagnostic("success", `語音播放完成，語音：${environment.selectedVoice}`, environment);
     debugLog("語音播放完成");
+    stopVoiceButton.classList.remove("show");
   };
   utterance.onerror = (event) => {
     finished = true;
     chrome.runtime.sendMessage({ type: "tts-playback-state", active: false });
+    stopVoiceButton.classList.remove("show");
     const reason = explainSpeechError(event.error);
     publishTtsDiagnostic("failed", reason, { ...environment, browserError: event.error || "unknown" });
     console.error("[Meet AI][content] 語音播放失敗", { browserError: event.error, reason, environment });
-    showNotice(reason);
+    // A manual stop-voice click also lands here (error "canceled"/"interrupted"),
+    // so don't surface a scary notice for what the user just asked for.
+    if (event.error !== "canceled" && event.error !== "interrupted") {
+      showNotice(reason);
+    }
   };
 
   try {
@@ -270,15 +302,20 @@ function showNotice(text) {
   notice.classList.add("show");
 }
 
+async function ensureChatPanelOpen() {
+  const existing = findChatInput();
+  if (existing) return existing;
+  const chatButton = findChatOpenButton();
+  if (!chatButton) throw new Error("找不到聊天室按鈕");
+  chatButton.click();
+  const input = await waitForChatInput(3000);
+  if (!input) throw new Error("找不到聊天室輸入框");
+  return input;
+}
+
 async function sendMeetChatMessage(text) {
   debugLog("準備發送 Meet 聊天室訊息", { text });
-  let input = findChatInput();
-  if (!input) {
-    const chatButton = findChatOpenButton();
-    if (!chatButton) throw new Error("找不到聊天室按鈕");
-    chatButton.click();
-    input = await waitForChatInput(3000);
-  }
+  const input = await ensureChatPanelOpen();
   if (!input) throw new Error("找不到聊天室輸入框");
 
   input.focus();
