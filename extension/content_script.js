@@ -15,7 +15,9 @@ root.innerHTML = `
     .badge { padding:3px 8px; border-radius:999px; background:#f59e0b; color:#111827; font-weight:700; font-size:12px; }
     .confidence { margin-left:auto; color:#9ca3af; font-size:12px; }
     .message { font-size:16px; font-weight:650; }
-    .explanation { margin-top:6px; color:#d1d5db; font-size:12px; }
+    .reasons { margin:6px 0 0; padding-left:18px; color:#d1d5db; font-size:12px; }
+    .reasons li { margin-top:2px; }
+    .quote { margin-top:6px; padding-left:8px; border-left:2px solid #4b5563; color:#9ca3af; font-size:12px; font-style:italic; }
     .target { margin-bottom:5px; color:#fde68a; font-size:12px; }
     button { border:0; cursor:pointer; color:#e5e7eb; }
     .close { position:absolute; right:8px; top:8px; background:transparent; font-size:18px; }
@@ -24,7 +26,7 @@ root.innerHTML = `
   <aside class="card" role="alert" aria-live="assertive">
     <button class="close" aria-label="關閉">×</button>
     <div class="top"><span class="badge"></span><span class="confidence"></span></div>
-    <div class="target"></div><div class="message"></div><div class="explanation"></div>
+    <div class="target"></div><div class="message"></div><ul class="reasons"></ul><div class="quote"></div>
     <button class="ignore">忽略</button>
   </aside>
   <aside class="notice" role="status"><button class="close" aria-label="關閉">×</button><span></span></aside>`;
@@ -61,7 +63,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       issue_type: "contradiction",
       confidence: 0.99,
       target_speaker: "測試講者",
-      explanation: "這是浮動卡片與語音功能測試。",
+      reasons: ["這是浮動卡片與語音功能測試。"],
+      quote: "（測試逐字稿原文）",
       message: "🤖 AI 提醒：如果你聽到這句話，語音功能運作正常。"
     };
     showInterjection(testMessage);
@@ -103,10 +106,22 @@ function showInterjection(message) {
   root.querySelector(".confidence").textContent = `${Math.round((message.confidence || 0) * 100)}% 信心`;
   root.querySelector(".target").textContent = message.target_speaker ? `對象：${message.target_speaker}` : "整體會議提醒";
   root.querySelector(".message").textContent = message.message;
-  root.querySelector(".explanation").textContent = message.explanation;
+  renderReasons(message.reasons);
+  const quoteEl = root.querySelector(".quote");
+  quoteEl.textContent = message.quote ? `「${message.quote}」` : "";
   card.classList.add("show");
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => card.classList.remove("show"), 12000);
+}
+
+function renderReasons(reasons) {
+  const list = root.querySelector(".reasons");
+  list.textContent = "";
+  for (const reason of reasons || []) {
+    const item = document.createElement("li");
+    item.textContent = reason;
+    list.appendChild(item);
+  }
 }
 
 function showSummary(text) {
@@ -114,7 +129,8 @@ function showSummary(text) {
   root.querySelector(".confidence").textContent = "";
   root.querySelector(".target").textContent = "";
   root.querySelector(".message").textContent = text || "目前還沒有足夠內容可以整理重點。";
-  root.querySelector(".explanation").textContent = "";
+  renderReasons([]);
+  root.querySelector(".quote").textContent = "";
   card.classList.add("show");
   clearTimeout(hideTimer);
   hideTimer = setTimeout(() => card.classList.remove("show"), 20000);

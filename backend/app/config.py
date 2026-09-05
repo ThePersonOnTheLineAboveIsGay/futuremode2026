@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     gemini_model: str = Field(default="gemini-3.8-flash", alias="GEMINI_MODEL")
     interjection_confidence_threshold: float = Field(default=0.7, alias="INTERJECTION_CONFIDENCE_THRESHOLD")
     analysis_interval_seconds: float = Field(default=15, alias="ANALYSIS_INTERVAL_SECONDS")
+    # Analysis also runs early once this many new utterances pile up, even if
+    # the interval above hasn't elapsed yet — keeps fast-moving exchanges from
+    # feeling sluggish without lowering the interval (and thus the API-call
+    # rate) for slow-moving ones.
+    analysis_min_new_utterances: int = Field(default=3, alias="ANALYSIS_MIN_NEW_UTTERANCES")
     conversation_window_minutes: int = Field(default=15, alias="CONVERSATION_WINDOW_MINUTES")
     conversation_max_utterances: int = Field(default=100, alias="CONVERSATION_MAX_UTTERANCES")
     room_idle_timeout_minutes: int = Field(default=30, alias="ROOM_IDLE_TIMEOUT_MINUTES")

@@ -99,7 +99,7 @@ def test_openrouter_does_not_send_instruction_prompt_without_context() -> None:
 def test_gemini_returns_structured_interjection() -> None:
     async def scenario() -> None:
         interactions = FakeGeminiInteractions(
-            '{"has_issue":true,"issue_type":"contradiction","explanation":"A 改成 B",'
+            '{"has_issue":true,"issue_type":"contradiction","reasons":["A 改成 B"],'
             '"suggested_interjection":"請說明改變原因","confidence":0.9,"target_speaker":null}'
         )
         client = SimpleNamespace(aio=SimpleNamespace(interactions=interactions))

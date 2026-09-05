@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import logging
+import re
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,6 +16,16 @@ from .conversation_buffer import ConversationBuffer, Utterance
 
 logger = logging.getLogger("meet-ai-interrupter.rooms")
 
+# Two already-reported issues are treated as "the same one" (see
+# register_issue_if_new) once their normalized text is at least this similar,
+# so the model repeating a still-unresolved contradiction in slightly
+# different wording doesn't count as a new topic.
+SIMILAR_ISSUE_RATIO = 0.6
+
+
+def _normalize_issue_topic(topic: str) -> str:
+    return re.sub(r"\s+", "", topic.lower())[:200]
+
 
 @dataclass
 class RoomState:
@@ -23,8 +35,16 @@ class RoomState:
     chat_sender: WebSocket | None = None
     last_activity: float = field(default_factory=monotonic)
     last_analysis_at: float = field(default_factory=lambda: float("-inf"))
+    # Count of utterances added since the last analysis ran; lets a burst of
+    # new utterances trigger analysis early even if the time interval hasn't
+    # elapsed yet — see add_utterance's min_new_utterances.
+    utterances_since_analysis: int = 0
     last_chat_by_speaker: dict[str, float] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Normalized text of issues already broadcast this meeting, for
+    # register_issue_if_new's fuzzy dedup and for feeding back into the
+    # analysis prompt so the model itself avoids re-flagging the same thing.
+    reported_issues: list[str] = field(default_factory=list)
     # Unpruned, whole-meeting log for the summarize feature. `buffer` above is a
     # rolling window scoped to contradiction analysis and must stay that way.
     full_history: list[Utterance] = field(default_factory=list)
@@ -122,6 +142,7 @@ class RoomManager:
         timestamp: datetime,
         source: str,
         analysis_interval_seconds: float,
+        min_new_utterances: int = 1,
     ) -> tuple[Utterance | None, list[Utterance], bool]:
         room = self.rooms.get(meeting_id)
         if room is None:
@@ -132,12 +153,41 @@ class RoomManager:
             if latest is None:
                 return None, [], False
             room.full_history.append(latest)
+            room.utterances_since_analysis += 1
             history = room.buffer.history_before(latest)
             now = monotonic()
-            should_analyze = bool(history) and now - room.last_analysis_at >= analysis_interval_seconds
+            # Either condition can trigger analysis: the usual time throttle,
+            # or enough new utterances piling up in a fast-moving exchange
+            # that waiting out the full interval would feel sluggish.
+            interval_elapsed = now - room.last_analysis_at >= analysis_interval_seconds
+            burst_reached = room.utterances_since_analysis >= min_new_utterances
+            should_analyze = bool(history) and (interval_elapsed or burst_reached)
             if should_analyze:
                 room.last_analysis_at = now
+                room.utterances_since_analysis = 0
             return latest, history, should_analyze
+
+    def reported_issues_for_prompt(self, meeting_id: str) -> list[str]:
+        room = self.rooms.get(meeting_id)
+        return list(room.reported_issues) if room else []
+
+    async def register_issue_if_new(self, meeting_id: str, topic: str) -> bool:
+        """Fuzzy-dedup an about-to-broadcast issue against ones already
+        reported in this room. Returns False (and records nothing) if it's
+        substantially similar to one already reported — the model can still
+        get asked not to repeat itself via reported_issues_for_prompt, but
+        this is the hard backstop for when it does anyway."""
+        room = self.rooms.get(meeting_id)
+        if room is None:
+            return True
+        async with room.lock:
+            normalized = _normalize_issue_topic(topic)
+            for previous in room.reported_issues:
+                ratio = difflib.SequenceMatcher(None, normalized, _normalize_issue_topic(previous)).ratio()
+                if ratio >= SIMILAR_ISSUE_RATIO:
+                    return False
+            room.reported_issues.append(topic)
+            return True
 
     async def reserve_chat_slot(self, meeting_id: str, speaker: str | None, cooldown_seconds: float) -> bool:
         room = self.rooms.get(meeting_id)

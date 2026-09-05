@@ -228,14 +228,17 @@ Extension popup 有一個「整理重點（Debug）」按鈕，會請後端把**
   "meeting_id": "xxx-yyyy-zzz",
   "target_speaker": "小美",
   "issue_type": "contradiction",
-  "explanation": "稍早提到方案 A，現在改為方案 B，未說明原因。",
+  "reasons": ["稍早提到方案 A，現在改為方案 B", "沒有說明改變原因"],
+  "quote": "那我們就先用方案 B 好了",
   "message": "🤖 AI 提醒：小美，稍早提到要用方案 A，現在說的是方案 B，要說明改變原因嗎？",
   "confidence": 0.82,
   "send_to_chat": true
 }
 ```
 
-`target_speaker` 只有在該發言有對應的顯示名稱時才會指名；沒有身分資訊時仍是 `null`（退回舊版的模糊會議提醒）。`send_to_chat` 只會對同房被選為聊天室發送端的那條連線設為 `true`。
+`target_speaker` 只有在該發言有對應的顯示名稱時才會指名；沒有身分資訊時仍是 `null`（退回舊版的模糊會議提醒）。`reasons` 是條列的具體理由（最多 3 點），`quote` 是最新發言逐字稿中觸發此判斷的原文片段。`send_to_chat` 只會對同房被選為聊天室發送端的那條連線設為 `true`。
+
+同一個問題不會無限期重複插話：後端會記住本次會議已經廣播過的問題（模糊比對措辭差異），一旦判定是同一件事，除非模型認為有實質新理由，否則不會再次觸發，也不會餵給前端。
 
 要求整理重點：
 
@@ -345,6 +348,8 @@ WebSocket 仍接受 `type: transcript` 供測試；URL 必須附 meeting ID：
 `speaker` 顯示 Extension 設定的顯示名稱；沒有設定時是 `unknown`（沒裝 Extension 或沒填名稱也偵測不到自己名字時的情況）。
 
 正常情況就會顯示 `source=stt`，代表逐字稿由 AI 從音訊產生。`AI result` 若是 `issue=false`，系統刻意不插話；只要判斷有問題（`issue=true`）就會插話，不會再另外用信心分數擋掉。第一段發言只有建立歷史，也不會立刻判斷矛盾。
+
+觸發分析的時機是「兩者任一滿足」：距離上次分析已經過 `ANALYSIS_INTERVAL_SECONDS`（預設 15 秒），**或**累積了 `ANALYSIS_MIN_NEW_UTTERANCES`（預設 3 則）新逐字稿——後者讓交談密集時不用乾等滿整個時間間隔，同時不用把間隔本身調短（調短代表分析頻率、API 用量都跟著提高）。若模型判定有問題但跟本次會議已經廣播過的問題太相似，log 會顯示 `Interjection suppressed as duplicate of an already-reported issue`，不會重複插話。
 
 Extension 的前端 log：在 Meet 頁面按 `F12` → `Console`，搜尋 `[Meet AI]`。這裡會顯示智慧採樣啟動、語音段落送出、插話收到、聊天室送出以及語音播放成功或失敗。
 

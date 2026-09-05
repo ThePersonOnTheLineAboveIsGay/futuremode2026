@@ -21,7 +21,9 @@ class Transcriber(Protocol):
 
 
 class Detector(Protocol):
-    async def analyze(self, history: list[Utterance], latest: Utterance) -> InterjectionAnalysis: ...
+    async def analyze(
+        self, history: list[Utterance], latest: Utterance, already_reported: list[str] | None = None
+    ) -> InterjectionAnalysis: ...
 
 
 @dataclass

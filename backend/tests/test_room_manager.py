@@ -99,6 +99,68 @@ def test_snapshot_history_keeps_whole_meeting_past_rolling_window() -> None:
     asyncio.run(scenario())
 
 
+def test_burst_of_new_utterances_triggers_analysis_before_interval_elapses() -> None:
+    async def scenario() -> None:
+        manager = RoomManager(15, 100, idle_timeout_seconds=60)
+        socket = FakeWebSocket()
+        await manager.join("aaa-bbbb-ccc", socket, display_name=None)
+        now = datetime.now(timezone.utc)
+
+        # First utterance: no prior history yet, so it never analyzes on its
+        # own regardless of the burst/interval settings.
+        await manager.add_utterance("aaa-bbbb-ccc", "第一句", None, now, "stt", 999, min_new_utterances=3)
+        # Second utterance: last_analysis_at is still -inf (nothing has ever
+        # been analyzed), so the time-based condition alone fires here — this
+        # "warms up" last_analysis_at to a real timestamp so the burst
+        # trigger below can be tested in isolation from that startup edge case.
+        _, _, warmed_up = await manager.add_utterance(
+            "aaa-bbbb-ccc", "第二句", None, now, "stt", 999, min_new_utterances=3
+        )
+        assert warmed_up
+
+        # From here, interval=999s never elapses on its own; only piling up
+        # min_new_utterances new utterances should trigger analysis.
+        _, _, analyzed1 = await manager.add_utterance(
+            "aaa-bbbb-ccc", "第三句", None, now, "stt", 999, min_new_utterances=3
+        )
+        assert not analyzed1  # only 1 new utterance since the warmup analysis
+        _, _, analyzed2 = await manager.add_utterance(
+            "aaa-bbbb-ccc", "第四句", None, now, "stt", 999, min_new_utterances=3
+        )
+        assert not analyzed2  # only 2 new utterances so far
+        _, _, analyzed3 = await manager.add_utterance(
+            "aaa-bbbb-ccc", "第五句", None, now, "stt", 999, min_new_utterances=3
+        )
+        assert analyzed3  # 3rd new utterance reaches the burst threshold
+
+    asyncio.run(scenario())
+
+
+def test_register_issue_if_new_deduplicates_similar_wording() -> None:
+    async def scenario() -> None:
+        manager = RoomManager(15, 100, idle_timeout_seconds=60)
+        socket = FakeWebSocket()
+        await manager.join("aaa-bbbb-ccc", socket, display_name=None)
+
+        assert await manager.register_issue_if_new(
+            "aaa-bbbb-ccc", "contradiction|王小明|稍早提到方案 A，現在改成方案 B，沒有說明原因"
+        )
+        # Same underlying issue, slightly different wording -> suppressed.
+        assert not await manager.register_issue_if_new(
+            "aaa-bbbb-ccc", "contradiction|王小明|稍早提到方案 A，現在卻改成方案 B，也沒說明原因"
+        )
+        # A genuinely different issue still gets through.
+        assert await manager.register_issue_if_new(
+            "aaa-bbbb-ccc", "off_topic|王小明|聊到跟會議主題完全無關的週末旅遊計畫"
+        )
+        assert manager.reported_issues_for_prompt("aaa-bbbb-ccc") == [
+            "contradiction|王小明|稍早提到方案 A，現在改成方案 B，沒有說明原因",
+            "off_topic|王小明|聊到跟會議主題完全無關的週末旅遊計畫",
+        ]
+
+    asyncio.run(scenario())
+
+
 def test_join_tracks_participant_display_names() -> None:
     async def scenario() -> None:
         manager = RoomManager(15, 100, idle_timeout_seconds=60)

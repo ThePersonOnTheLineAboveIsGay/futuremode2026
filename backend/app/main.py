@@ -194,6 +194,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
             timestamp=timestamp,
             source=source,
             analysis_interval_seconds=settings.analysis_interval_seconds,
+            min_new_utterances=settings.analysis_min_new_utterances,
         )
         if latest is None:
             logger.info("[%s] Duplicate/empty transcript ignored", meeting_id)
@@ -209,49 +210,64 @@ async def meeting_socket(websocket: WebSocket) -> None:
         })
         if not analyze_now:
             logger.info(
-                "[%s] Saved transcript; AI analysis skipped (no history or %ss throttle)",
+                "[%s] Saved transcript; AI analysis skipped (no history, or below both the %ss throttle "
+                "and %d-utterance burst threshold)",
                 meeting_id,
                 settings.analysis_interval_seconds,
+                settings.analysis_min_new_utterances,
             )
             return
 
         logger.info("[%s] Sending transcript history to %s for analysis", meeting_id, settings.ai_provider)
         await safe_send_json(websocket, {"type": "status", "status": "analyzing", "meeting_id": meeting_id})
         try:
-            result = await detector.analyze(history, latest)
+            already_reported = rooms.reported_issues_for_prompt(meeting_id)
+            result = await detector.analyze(history, latest, already_reported=already_reported)
             logger.info(
-                "[%s] AI result | issue=%s | type=%s | confidence=%.2f | target=%s | explanation=%s",
+                "[%s] AI result | issue=%s | type=%s | confidence=%.2f | target=%s | reasons=%s | quote=%s",
                 meeting_id,
                 result.has_issue,
                 result.issue_type,
                 result.confidence,
                 result.target_speaker or "none",
-                result.explanation or "none",
+                result.reasons or "none",
+                result.quote or "none",
             )
             if should_interject(result):
-                message_text = format_interjection(result.suggested_interjection, result.target_speaker)
-                allow_chat = await rooms.reserve_chat_slot(
-                    meeting_id, result.target_speaker, settings.chat_cooldown_seconds
+                topic = (
+                    f"{result.issue_type}|{result.target_speaker or ''}|"
+                    f"{' '.join(result.reasons)}|{result.suggested_interjection}"
                 )
-                await rooms.broadcast(
-                    meeting_id,
-                    {
-                        "type": "interjection",
-                        "meeting_id": meeting_id,
-                        "target_speaker": result.target_speaker,
-                        "issue_type": result.issue_type,
-                        "explanation": result.explanation,
-                        "message": message_text,
-                        "confidence": result.confidence,
-                    },
-                    allow_chat=allow_chat,
-                )
-                logger.info(
-                    "[%s] INTERJECTION broadcast | chat=%s | message=%s",
-                    meeting_id,
-                    allow_chat,
-                    message_text,
-                )
+                is_new_issue = await rooms.register_issue_if_new(meeting_id, topic)
+                if not is_new_issue:
+                    logger.info(
+                        "[%s] Interjection suppressed as duplicate of an already-reported issue", meeting_id
+                    )
+                else:
+                    message_text = format_interjection(result.suggested_interjection, result.target_speaker)
+                    allow_chat = await rooms.reserve_chat_slot(
+                        meeting_id, result.target_speaker, settings.chat_cooldown_seconds
+                    )
+                    await rooms.broadcast(
+                        meeting_id,
+                        {
+                            "type": "interjection",
+                            "meeting_id": meeting_id,
+                            "target_speaker": result.target_speaker,
+                            "issue_type": result.issue_type,
+                            "reasons": result.reasons,
+                            "quote": result.quote,
+                            "message": message_text,
+                            "confidence": result.confidence,
+                        },
+                        allow_chat=allow_chat,
+                    )
+                    logger.info(
+                        "[%s] INTERJECTION broadcast | chat=%s | message=%s",
+                        meeting_id,
+                        allow_chat,
+                        message_text,
+                    )
             else:
                 logger.info("[%s] No interjection (no clear issue)", meeting_id)
         except Exception as exc:

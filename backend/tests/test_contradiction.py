@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.contradiction import ContradictionDetector, InterjectionAnalysis
+from app.contradiction import ContradictionDetector, InterjectionAnalysis, build_analysis_prompt
 from app.conversation_buffer import Utterance
 
 
@@ -12,7 +12,7 @@ class FakeResponses:
             output_parsed=InterjectionAnalysis(
                 has_issue=True,
                 issue_type="contradiction",
-                explanation="A 與 B 不一致",
+                reasons=["A 與 B 不一致"],
                 suggested_interjection="請說明改變原因",
                 confidence=0.9,
                 target_speaker="模型猜測值",
@@ -46,3 +46,23 @@ def test_detector_uses_latest_caption_speaker_as_target() -> None:
         assert result.target_speaker == "王小明"
 
     asyncio.run(scenario())
+
+
+def test_prompt_tells_model_about_already_reported_issues() -> None:
+    now = datetime.now(timezone.utc)
+    prompt = build_analysis_prompt(
+        [Utterance("採用 A", now, speaker="王小明")],
+        Utterance("採用 B", now, speaker="王小明"),
+        already_reported=["contradiction|王小明|A 改成 B"],
+    )
+    assert "已經回報過的具體問題" in prompt
+    assert "contradiction|王小明|A 改成 B" in prompt
+
+
+def test_prompt_omits_reported_block_when_nothing_reported_yet() -> None:
+    now = datetime.now(timezone.utc)
+    prompt = build_analysis_prompt(
+        [Utterance("採用 A", now, speaker="王小明")],
+        Utterance("採用 B", now, speaker="王小明"),
+    )
+    assert "已經回報過的問題" not in prompt
