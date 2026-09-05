@@ -4,6 +4,11 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+RETIRED_GEMINI_MODELS = {
+    "gemini-2.5-flash": "gemini-3.8-flash",
+    "gemini-3.6-flash": "gemini-3.8-flash",
+}
+
 
 class Settings(BaseSettings):
     ai_provider: Literal["openai", "gemini"] = Field(default="openai", alias="AI_PROVIDER")
@@ -11,7 +16,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     llm_model: str = Field(default="gpt-4o", alias="LLM_MODEL")
-    gemini_model: str = Field(default="gemini-3.6-flash", alias="GEMINI_MODEL")
+    gemini_model: str = Field(default="gemini-3.8-flash", alias="GEMINI_MODEL")
     interjection_confidence_threshold: float = Field(default=0.7, alias="INTERJECTION_CONFIDENCE_THRESHOLD")
     analysis_interval_seconds: float = Field(default=15, alias="ANALYSIS_INTERVAL_SECONDS")
     conversation_window_minutes: int = Field(default=15, alias="CONVERSATION_WINDOW_MINUTES")
@@ -53,9 +58,8 @@ class Settings(BaseSettings):
     @field_validator("gemini_model", mode="before")
     @classmethod
     def migrate_retired_gemini_model(cls, value: object) -> object:
-        if str(value).removeprefix("models/") == "gemini-2.5-flash":
-            return "gemini-3.6-flash"
-        return value
+        name = str(value).removeprefix("models/")
+        return RETIRED_GEMINI_MODELS.get(name, value)
 
 
 @lru_cache

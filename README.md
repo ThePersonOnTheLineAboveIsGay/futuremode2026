@@ -175,7 +175,7 @@ GEMINI_API_KEY=你的金鑰
 OPENROUTER_API_KEY=sk-or-v1-你的金鑰
 ```
 
-模型由後端的建議預設值管理，一般使用者不必在 `.env` 設定模型，也不建議自行加入模型欄位。STT 固定為 `openai/whisper-large-v3`；目前 Gemini 分析使用 `gemini-3.6-flash`。
+模型由後端的建議預設值管理，一般使用者不必在 `.env` 設定模型，也不建議自行加入模型欄位。STT 固定為 `openai/whisper-large-v3`；目前 Gemini 分析使用 `gemini-3.8-flash`，並將 `thinking_level` 設為 `low`（此模型支援的最快等級）以取得最快回應速度。
 
 切換 provider 或 key 後必須重新啟動後端。音訊擷取、room、廣播及 Meet UI 不需要修改。
 

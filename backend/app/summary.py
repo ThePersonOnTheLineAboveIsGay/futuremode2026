@@ -46,6 +46,9 @@ class GeminiSummarizer:
             model=self.model,
             input=build_summary_prompt(history),
             system_instruction=SUMMARY_SYSTEM_PROMPT,
+            # "low" is the fastest thinking_level this model accepts (no
+            # "minimal" — the API rejects that value here with a 400).
+            generation_config={"thinking_level": "low"},
             store=False,
         )
         return (interaction.output_text or "").strip()

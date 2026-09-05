@@ -79,6 +79,10 @@ class GeminiContradictionDetector:
                 "mime_type": "application/json",
                 "schema": InterjectionAnalysis.model_json_schema(),
             },
+            # Interjections must land while the conversation is still relevant;
+            # "low" is the fastest thinking_level this model accepts (no
+            # "minimal" — the API rejects that value here with a 400).
+            generation_config={"thinking_level": "low"},
             store=False,
         )
         if not interaction.output_text:

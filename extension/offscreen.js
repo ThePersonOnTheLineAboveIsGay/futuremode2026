@@ -1,17 +1,12 @@
 const VAD_FRAME_MS = 100;
-// Ambient noise level varies enormously by venue — a quiet home office vs. a
-// noisy conference hall or banquet ("年會會場") — and that's not something a
-// client should ever have to hand-tune per meeting. So VAD thresholds are not
-// fixed numbers: each pipeline continuously measures its own ambient noise
-// floor (see noiseFloor below) while nobody is speaking, and derives its
-// start/silence thresholds from that floor. Mic input also gets Chrome's
-// default auto-gain-control, so real speech reliably clears higher levels
-// than tab-captured audio (remote participants' voices as rendered by Meet),
-// which gets no such boost — hence the separate, more sensitive multipliers
-// and bounds for the tab-mix pipeline below.
-const NOISE_FLOOR_EMA_ALPHA = 0.05;
-const MIC_CALIBRATION = { startMultiplier: 4, silenceMultiplier: 2, minStartRms: 0.006, maxStartRms: 0.05 };
-const TAB_CALIBRATION = { startMultiplier: 3.5, silenceMultiplier: 1.8, minStartRms: 0.0008, maxStartRms: 0.02 };
+// Mic input gets Chrome's default auto-gain-control, so real speech reliably
+// clears these levels. Tab-captured audio (remote participants' voices as
+// rendered by Meet) gets no such boost and can sit much quieter, so its
+// pipeline uses a noticeably more sensitive pair below.
+const MIC_START_RMS = 0.012;
+const MIC_SILENCE_RMS = 0.006;
+const TAB_START_RMS = 0.0012;
+const TAB_SILENCE_RMS = 0.0006;
 const MIN_SEGMENT_MS = 1200;
 // Cut as soon as a natural pause shows someone's done talking, rather than
 // accumulating a fixed-length window — each finished utterance becomes its
@@ -48,7 +43,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-function createPipeline(label, { emitStatus, calibration }) {
+function createPipeline(label, { emitStatus, startRms, silenceRms }) {
   let mediaStream = null;
   let audioContext = null;
   let analyser = null;
@@ -67,27 +62,10 @@ function createPipeline(label, { emitStatus, calibration }) {
   let shouldReconnect = false;
   let audioCaptureEnabled = false;
   let connectParams = null;
-  // Ambient noise floor, continuously re-estimated from quiet frames only
-  // (see sampleVoiceActivity). Seeded low so the very first frames fall back
-  // on calibration.minStartRms rather than an unwarranted guess.
-  let noiseFloor = calibration.minStartRms / calibration.startMultiplier;
 
   function log(message, detail) {
     if (detail === undefined) console.info(`[Meet AI][offscreen:${label}] ${message}`);
     else console.info(`[Meet AI][offscreen:${label}] ${message}`, detail);
-  }
-
-  function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-  }
-
-  function currentThresholds() {
-    const startRms = clamp(noiseFloor * calibration.startMultiplier, calibration.minStartRms, calibration.maxStartRms);
-    // Silence threshold always stays comfortably below the start threshold
-    // (hysteresis), so a segment never flickers stop/start on noise sitting
-    // right at the boundary.
-    const silenceRms = clamp(noiseFloor * calibration.silenceMultiplier, calibration.minStartRms * 0.4, startRms * 0.6);
-    return { startRms, silenceRms };
   }
 
   async function start(stream, { websocketUrl, meetingId, displayName, routeToDestination }) {
@@ -178,14 +156,14 @@ function createPipeline(label, { emitStatus, calibration }) {
 
   function startVadLoop() {
     if (vadTimer || !analyser || !analyserBuffer) return;
-    log("智慧語音採樣啟動（門檻將依環境噪音自動校準）", currentThresholds());
+    log("智慧語音採樣啟動", { startRms, silenceRms });
     vadTimer = setInterval(sampleVoiceActivity, VAD_FRAME_MS);
     peakRms = 0;
-    // Diagnostic only: prints the loudest sample plus the live-calibrated
-    // noise floor/thresholds every 5s, so behaviour at a real venue (quiet
-    // room vs. a noisy 年會會場) can be read off directly instead of guessed.
+    // Diagnostic only: prints the loudest sample seen every 5s so threshold
+    // tuning (e.g. for tab-mix, which has no mic-style auto-gain) can be
+    // based on real numbers instead of another guess.
     peakLogTimer = setInterval(() => {
-      log("峰值音量與目前門檻（除錯用）", { peakRms: peakRms.toFixed(4), noiseFloor: noiseFloor.toFixed(4), ...currentThresholds() });
+      log("峰值音量（除錯用）", { peakRms: peakRms.toFixed(4), startRms, silenceRms });
       peakRms = 0;
     }, 5000);
   }
@@ -201,16 +179,12 @@ function createPipeline(label, { emitStatus, calibration }) {
     if (!audioCaptureEnabled || stopping || !analyser || !analyserBuffer) return;
     const rms = currentRms();
     peakRms = Math.max(peakRms, rms);
-    const { startRms, silenceRms } = currentThresholds();
     const now = Date.now();
-    if (!recorder) {
-      // Only learn from frames that are already below the current threshold,
-      // so a rising speech onset can never drag the "ambient" floor upward
-      // mid-utterance — it just gets recognized as speech instead.
-      if (rms < startRms) noiseFloor += (rms - noiseFloor) * NOISE_FLOOR_EMA_ALPHA;
-      else startActiveSegment(rms);
+    if (!recorder && rms >= startRms) {
+      startActiveSegment(rms);
       return;
     }
+    if (!recorder) return;
 
     if (rms < silenceRms) silenceStartedAt ||= now;
     else silenceStartedAt = 0;
@@ -317,8 +291,8 @@ function createPipeline(label, { emitStatus, calibration }) {
 // its own connectivity blips don't touch that UI. Both still relay actual
 // content (interjection/summary/etc.); duplicate broadcasts arriving on both
 // connections are merged in relayServerMessage() below.
-const micPipeline = createPipeline("mic", { emitStatus: true, calibration: MIC_CALIBRATION });
-const tabPipeline = createPipeline("tab-mix", { emitStatus: false, calibration: TAB_CALIBRATION });
+const micPipeline = createPipeline("mic", { emitStatus: true, startRms: MIC_START_RMS, silenceRms: MIC_SILENCE_RMS });
+const tabPipeline = createPipeline("tab-mix", { emitStatus: false, startRms: TAB_START_RMS, silenceRms: TAB_SILENCE_RMS });
 
 function relayServerMessage(message) {
   if (message.type !== "interjection" && message.type !== "summary") {
@@ -350,7 +324,10 @@ async function start({ meetingId, websocketUrl, displayName, tabStreamId }) {
   await stopAll();
   activeMeetingId = meetingId;
 
-  const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  const micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    video: false
+  });
   micStream.getAudioTracks()[0]?.addEventListener("ended", () => stopAll(), { once: true });
   await micPipeline.start(micStream, { websocketUrl, meetingId, displayName, routeToDestination: false });
 

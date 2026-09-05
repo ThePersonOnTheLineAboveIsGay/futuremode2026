@@ -33,7 +33,9 @@ def test_provider_requires_the_selected_key() -> None:
 
 def test_retired_gemini_model_is_migrated() -> None:
     settings = Settings(AI_PROVIDER="gemini", GEMINI_API_KEY="test", GEMINI_MODEL="gemini-2.5-flash")
-    assert settings.gemini_model == "gemini-3.6-flash"
+    assert settings.gemini_model == "gemini-3.8-flash"
+    settings = Settings(AI_PROVIDER="gemini", GEMINI_API_KEY="test", GEMINI_MODEL="gemini-3.6-flash")
+    assert settings.gemini_model == "gemini-3.8-flash"
 
 
 class FakeHTTPResponse:
@@ -101,7 +103,7 @@ def test_gemini_returns_structured_interjection() -> None:
             '"suggested_interjection":"請說明改變原因","confidence":0.9,"target_speaker":null}'
         )
         client = SimpleNamespace(aio=SimpleNamespace(interactions=interactions))
-        detector = GeminiContradictionDetector(client, "gemini-3.6-flash")
+        detector = GeminiContradictionDetector(client, "gemini-3.8-flash")
         now = datetime.now(timezone.utc)
 
         result = await detector.analyze(
