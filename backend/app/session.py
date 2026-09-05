@@ -39,9 +39,9 @@ class Session:
     _last_analysis_time: float = field(default_factory=time.time)
     # topic key -> 已回報過的 verdict
     _reported: dict[str, str] = field(default_factory=dict)
-    # 已回報過「不可行」的原始 topic 文字，餵回 prompt 讓模型自己判斷語意重複
-    # （純字串比對抓不住模型每次措辭略有不同的同一個提案）。
-    reported_topics: list[str] = field(default_factory=list)
+    # 已回報過（不可行或有疑慮）的 (原始 topic 文字, verdict)，餵回 prompt
+    # 讓模型自己判斷語意重複（純字串比對抓不住模型每次措辭略有不同的同一個提案）。
+    reported_topics: list[tuple[str, str]] = field(default_factory=list)
 
     def append(self, text: str, speaker: str = "") -> Utterance:
         u = Utterance(text=text.strip(), ts=time.time(), speaker=speaker.strip())
@@ -75,18 +75,22 @@ class Session:
     # ---------- 去重 ----------
 
     def is_new_report(self, topic: str, verdict: str) -> bool:
-        """同一提案只回報一次。分兩層擋重複：
-        1. 字面幾乎相同（字元相似度 ≥ 門檻）→ 直接擋，不管模型有沒有照 prompt 指示。
-        2. 完全相同才會覆寫 verdict 記錄（例如 needs_info 後來變 infeasible 這種轉變要放行）。
+        """同一提案、同一種判定只回報一次。分兩層擋重複：
+        1. 字面幾乎相同、且是同一個 verdict（字元相似度 ≥ 門檻）→ 直接擋，
+           不管模型有沒有照 prompt 指示。verdict 不同（例如 needs_info 後來
+           有新資訊變成 infeasible）視為新狀態，放行。
+        2. 完全相同才會覆寫記錄。
         """
+        if verdict not in ("infeasible", "needs_info"):
+            return False
         key = _normalize_topic(topic)
         if self._reported.get(key) == verdict:
             return False
-        if verdict == "infeasible":
-            for prev in self.reported_topics:
-                if difflib.SequenceMatcher(None, key, _normalize_topic(prev)).ratio() >= _SIMILAR_TOPIC_RATIO:
-                    return False
+        for prev_topic, prev_verdict in self.reported_topics:
+            if prev_verdict != verdict:
+                continue
+            if difflib.SequenceMatcher(None, key, _normalize_topic(prev_topic)).ratio() >= _SIMILAR_TOPIC_RATIO:
+                return False
         self._reported[key] = verdict
-        if verdict == "infeasible":
-            self.reported_topics.append(topic)
+        self.reported_topics.append((topic, verdict))
         return True

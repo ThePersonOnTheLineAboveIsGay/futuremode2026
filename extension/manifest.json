@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "會議可行性監聽 AI",
   "description": "在 Google Meet 會議中即時聆聽，偵測到不可行的提案時顯示理由。",
-  "version": "0.10.2",
+  "version": "0.11.1",
   "permissions": ["tabCapture", "offscreen", "storage", "tabs", "activeTab"],
   "host_permissions": [
     "https://meet.google.com/*",

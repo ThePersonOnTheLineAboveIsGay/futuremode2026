@@ -30,12 +30,15 @@ def _extract_json(text: str) -> dict:
     raise ValueError("回應中找不到 JSON")
 
 
+_VERDICT_LABEL = {"infeasible": "不可行", "needs_info": "有疑慮"}
+
+
 async def analyze(
     transcript: str,
     *,
     language: str,
     meeting_context: str = "",
-    already_reported: list[str] | None = None,
+    already_reported: list[tuple[str, str]] | None = None,
     client=None,
 ) -> AnalysisResult:
     """呼叫 Gemini 分析單一逐字稿視窗。純函式，不做過濾。"""
@@ -45,10 +48,12 @@ async def analyze(
     s = get_settings()
     client = client or get_client()
 
+    reported_labels = [f"{topic}（{_VERDICT_LABEL.get(v, v)}）" for topic, v in (already_reported or [])]
+
     try:
         resp = await client.aio.models.generate_content(
             model=s.gemini_model,
-            contents=build_user_prompt(transcript, meeting_context, already_reported),
+            contents=build_user_prompt(transcript, meeting_context, reported_labels),
             config=types.GenerateContentConfig(
                 system_instruction=build_system_prompt(language),
                 response_mime_type="application/json",
@@ -88,12 +93,19 @@ async def run_if_needed(session: Session, *, client=None) -> list[Assessment] | 
         already_reported=session.reported_topics,
         client=client,
     )
+    logger.info(
+        "分析原始回傳 %d 筆：%s",
+        len(result.assessments),
+        [(a.verdict, round(a.confidence, 2), a.topic) for a in result.assessments],
+    )
 
     out: list[Assessment] = []
     for a in result.assessments:
-        if a.verdict != "infeasible":
+        if a.verdict not in ("infeasible", "needs_info"):
             continue
-        if a.confidence < session.confidence_threshold:
+        # 信心門檻是「確實不可行」的把握程度，只套用在 infeasible；
+        # needs_info 本來就是「不確定，需要人來看」，不該再拿確定性去擋。
+        if a.verdict == "infeasible" and a.confidence < session.confidence_threshold:
             continue
         if not session.is_new_report(a.topic, a.verdict):
             continue

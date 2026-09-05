@@ -144,6 +144,32 @@ def test_different_topics_are_not_deduped():
     assert s.is_new_report("砍掉現有團隊全部外包", "infeasible") is True
 
 
+def test_verdict_change_for_same_topic_is_allowed():
+    s = _session()
+    # 先是「有疑慮」，後來有新資訊變成「不可行」：算新狀態，應該放行
+    assert s.is_new_report("區塊鏈重寫", "needs_info") is True
+    assert s.is_new_report("區塊鏈重寫", "infeasible") is True
+    # 但同一個 verdict 再報一次還是要擋
+    assert s.is_new_report("區塊鏈重寫", "infeasible") is False
+
+
+@pytest.mark.asyncio
+async def test_needs_info_is_reported_regardless_of_confidence():
+    s = _session(confidence_threshold=0.9)
+    for _ in range(3):
+        s.append("句")
+    client = FakeClient(
+        AnalysisResult(
+            assessments=[
+                Assessment(topic="X", verdict="needs_info", confidence=0.2, reasons=["缺預算資訊"])
+            ]
+        )
+    )
+    items = await analyzer.run_if_needed(s, client=client)
+    assert len(items) == 1
+    assert items[0].verdict == "needs_info"
+
+
 @pytest.mark.asyncio
 async def test_not_called_when_no_trigger():
     s = _session()

@@ -23,10 +23,25 @@ _EXT_BY_MIME = {
 # 模型在靜音／雜訊段常見的回應，直接丟棄
 _NOISE = {"", "（無語音）", "(無語音)", "[靜音]", "無法辨識", "no speech", "(silence)"}
 
+# Whisper 對靜音／雜訊段常見的另一種幻覺：腦補出 YouTube 影片開頭結尾的制式用語
+# （謝謝觀看、訂閱、點讚、字幕組…）。每次幻覺出的措辭都不一樣，精確比對擋不住，
+# 改用關鍵字命中數判斷——命中 2 個以上才視為幻覺，避免誤刪真的提到「訂閱」之類的正常發言。
+_HALLUCINATION_MARKERS = (
+    "謝謝觀看", "谢谢观看", "感謝觀看", "感谢观看",
+    "歡迎訂閱", "欢迎订阅", "請訂閱", "请订阅", "訂閱", "订阅",
+    "點讚", "点赞", "不吝點讚", "不吝点赞",
+    "轉發", "转发", "打賞", "打赏",
+    "字幕由", "字幕組", "字幕组",
+    "明鏡與點點", "明镜与点点",
+)
+
 
 def _looks_like_noise(text: str) -> bool:
     stripped = text.strip().strip("。.!！?？ ")
-    return stripped.lower() in _NOISE or len(stripped) == 0
+    if stripped.lower() in _NOISE or len(stripped) == 0:
+        return True
+    hits = sum(1 for marker in _HALLUCINATION_MARKERS if marker in stripped)
+    return hits >= 2
 
 
 async def transcribe(audio_bytes: bytes, *, mime: str = "audio/webm", **_: object) -> str:

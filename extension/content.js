@@ -1,6 +1,6 @@
 // 在 Google Meet 頁面顯示狀態、分析結果與除錯記錄。開始/停止在工具列圖示。
 (() => {
-  const VERSION = "0.10.2";
+  const VERSION = "0.11.1";
   const host = document.createElement("div");
   host.id = "mfa-root";
   document.documentElement.appendChild(host);
@@ -22,7 +22,9 @@
       .test-chat:hover { color: #cbd3e1; border-color: #4b5468; }
       .cards { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
       .card { background: #2b3140; border-left: 3px solid #f87171; border-radius: 8px; padding: 10px 12px; }
+      .card.needs-info { border-left-color: #fbbf24; }
       .card h4 { margin: 0 0 6px; font-size: 13px; color: #fca5a5; }
+      .card.needs-info h4 { color: #fcd34d; }
       .card ul { margin: 4px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.5; }
       .card .quote { margin-top: 6px; font-size: 11px; color: #9aa4b2; font-style: italic; }
       .card .x { float: right; cursor: pointer; color: #6b7280; }
@@ -80,14 +82,17 @@
   });
 
   function addAssessment(item) {
+    const isNeedsInfo = item.verdict === "needs_info";
+    const label = isNeedsInfo ? "有疑慮" : "不可行";
+
     panel.classList.remove("collapsed");
     msgEl.style.display = "none";
     const el = document.createElement("div");
-    el.className = "card";
+    el.className = "card" + (isNeedsInfo ? " needs-info" : "");
     const reasons = (item.reasons || []).map((r) => `<li>${escapeHtml(r)}</li>`).join("");
     el.innerHTML = `
       <span class="x">✕</span>
-      <h4>不可行：${escapeHtml(item.topic || "")}</h4>
+      <h4>${label}：${escapeHtml(item.topic || "")}</h4>
       <ul>${reasons}</ul>
       ${item.quote ? `<div class="quote">「${escapeHtml(item.quote)}」</div>` : ""}
     `;
@@ -96,7 +101,8 @@
 
     if (settings && settings.postToMeetChat && location.hostname === "meet.google.com") {
       const reasonsLine = (item.reasons || []).join("；");
-      const text = `⚠ 不可行提案：${item.topic || ""}${reasonsLine ? "\n理由：" + reasonsLine : ""}`;
+      const icon = isNeedsInfo ? "❓" : "⚠";
+      const text = `${icon} ${label}提案：${item.topic || ""}${reasonsLine ? "\n理由：" + reasonsLine : ""}`;
       sendToMeetChat(text);
     }
   }
@@ -166,7 +172,15 @@
     });
   }
 
-  async function sendToMeetChat(text) {
+  // 多則警告同時觸發時，逐一排隊送出——避免兩個 sendToMeetChat 同時搶同一個
+  // 輸入框，導致後面那則的 input.value 蓋掉前面那則還沒送出的內容，只送出一則。
+  let chatSendQueue = Promise.resolve();
+  function sendToMeetChat(text) {
+    chatSendQueue = chatSendQueue.then(() => doSendToMeetChat(text));
+    return chatSendQueue;
+  }
+
+  async function doSendToMeetChat(text) {
     try {
       let input = findChatInput();
       if (!input) {
