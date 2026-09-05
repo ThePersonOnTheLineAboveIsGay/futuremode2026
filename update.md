@@ -7,7 +7,7 @@
 1. 結束正在執行的後端：在後端終端機按 `Ctrl+C`。
 2. 不要刪除 `.env`，API key 與供應商設定都保存在這個檔案。
 3. 在專案目錄執行 `git status`。若有自己尚未提交的修改，請先 commit 或備份；不要直接覆蓋。
-4. 確認目前使用 `wuzuan_3` 分支：
+4. 確認目前使用 `wuzuan` 分支：
 
 ```text
 git branch --show-current
@@ -18,8 +18,8 @@ git branch --show-current
 進入專案資料夾後執行：
 
 ```powershell
-git switch wuzuan_3
-git pull origin wuzuan_3
+git switch wuzuan
+git pull origin wuzuan
 ```
 
 如果使用 Python 啟動後端：
@@ -41,8 +41,8 @@ docker compose logs -f backend
 ## macOS
 
 ```bash
-git switch wuzuan_3
-git pull origin wuzuan_3
+git switch wuzuan
+git pull origin wuzuan
 ```
 
 如果使用 Python：
@@ -64,8 +64,8 @@ docker compose logs -f backend
 ## Linux
 
 ```bash
-git switch wuzuan_3
-git pull origin wuzuan_3
+git switch wuzuan
+git pull origin wuzuan
 ```
 
 如果使用 Python：

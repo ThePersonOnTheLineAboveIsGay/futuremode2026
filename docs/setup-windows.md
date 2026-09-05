@@ -31,13 +31,13 @@ py --version
 ```powershell
 git clone https://github.com/ThePersonOnTheLineAboveIsGay/futuremode2026.git
 Set-Location futuremode2026
-git switch wuzuan_3
+git switch wuzuan
 ```
 
 已有專案時：
 
 ```powershell
-git switch wuzuan_3
+git switch wuzuan
 git pull
 ```
 

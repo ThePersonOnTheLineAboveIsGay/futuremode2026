@@ -34,13 +34,13 @@ sudo systemctl enable --now docker
 ```bash
 git clone https://github.com/ThePersonOnTheLineAboveIsGay/futuremode2026.git
 cd futuremode2026
-git switch wuzuan_3
+git switch wuzuan
 ```
 
 已有專案時：
 
 ```bash
-git switch wuzuan_3
+git switch wuzuan
 git pull
 ```
 

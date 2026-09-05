@@ -13,7 +13,7 @@
 ## 所有系統的共同流程
 
 1. 安裝 Git、Chrome，以及 Docker 或 Python 3.11 以上。
-2. 下載專案並切換到 `wuzuan_3` 分支。
+2. 下載專案並切換到 `wuzuan` 分支。
 3. 從 `.env.example` 建立 `.env`，填入語音辨識用的 `OPENROUTER_API_KEY`，再選擇 `AI_PROVIDER=openai` 或 `AI_PROVIDER=gemini` 並填入分析用 key。
 4. 啟動 FastAPI 後端。
 5. 在 `chrome://extensions` 載入 `extension` 資料夾。
