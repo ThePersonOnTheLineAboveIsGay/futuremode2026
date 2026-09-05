@@ -2,11 +2,29 @@
 // 每 25 秒送一段給後端、接收分析結果。
 // 結果透過 toSW() 繞道 service worker 轉發給目標分頁（offscreen 文件沒有 chrome.tabs 可用）。
 const CHUNK_MS = 25000;
+// 麥克風 RMS 音量門檻：低於這個值視為背景雜訊/呼吸聲等雜音，該瞬間直接靜音，
+// 不混進送出去轉錄的音軌；夠大聲（判斷為真的在講話）才放行。
+const MIC_RMS_THRESHOLD = 0.02;
+const MIC_GATE_INTERVAL_MS = 100;
+// 混音後整段（分頁＋麥克風）有沒有聲音的判斷門檻與取樣間隔：一個 CHUNK_MS
+// 期間裡「有聲音」取樣比例低於 MIN_ACTIVE_RATIO，代表整段幾乎全是靜音，
+// 直接不送出去轉錄——避免 Whisper 對著大片靜音腦補一堆無關句子。
+const ACTIVITY_RMS_THRESHOLD = 0.015;
+const ACTIVITY_CHECK_INTERVAL_MS = 200;
+const MIN_ACTIVE_RATIO = 0.05;
 
 let ws = null;
 let stream = null; // 混音後、真正拿去錄的 stream
 let tabStream = null; // 分頁音訊原始 stream
 let micStream = null; // 麥克風原始 stream（可能沒有，取決於是否已授權）
+let micGainNode = null; // 麥克風音量門檻控制用
+let micAnalyser = null;
+let micGateTimer = null;
+let activityAnalyser = null; // 監測混音後整段有沒有聲音，用來決定整段要不要送出
+let activityBuf = null;
+let activityTimer = null;
+let activeSamples = 0;
+let totalSamples = 0;
 let recorder = null;
 let audioCtx = null;
 let chunkTimer = null;
@@ -27,9 +45,25 @@ function toTab(msg) {
   toSW(msg);
 }
 
+function stopMicGate() {
+  clearTimeout(micGateTimer);
+  micGateTimer = null;
+  micGainNode = null;
+  micAnalyser = null;
+}
+
+function stopActivityMonitor() {
+  clearTimeout(activityTimer);
+  activityTimer = null;
+  activityAnalyser = null;
+  activityBuf = null;
+}
+
 function hardResetLocal() {
   // 清掉上一輪留下的擷取狀態。
   clearTimeout(chunkTimer);
+  stopMicGate();
+  stopActivityMonitor();
   try {
     recorder && recorder.state !== "inactive" && recorder.stop();
   } catch {}
@@ -89,9 +123,27 @@ async function startCapture(streamId) {
   tabSource.connect(dest);
   tabSource.connect(audioCtx.destination);
   if (micStream) {
-    audioCtx.createMediaStreamSource(micStream).connect(dest);
+    // 麥克風先過一個 GainNode 再混進去，音量門檻（startMicGate）會依 RMS
+    // 即時調整這個 gain：太小聲（背景雜訊/呼吸聲）就降到 0，夠大聲才放行。
+    const micSource = audioCtx.createMediaStreamSource(micStream);
+    micGainNode = audioCtx.createGain();
+    micGainNode.gain.value = 0;
+    micAnalyser = audioCtx.createAnalyser();
+    micAnalyser.fftSize = 512;
+    micSource.connect(micAnalyser);
+    micSource.connect(micGainNode).connect(dest);
+    startMicGate();
   }
   stream = dest.stream;
+
+  // 監測分頁＋麥克風混音後的整體音量，決定每段 CHUNK_MS 要不要送出去轉錄
+  // （見 startRecorderCycle／MIN_ACTIVE_RATIO）。跟 dest 平行接一份到獨立的
+  // AnalyserNode，不影響實際錄音的那條線路。
+  activityAnalyser = audioCtx.createAnalyser();
+  activityAnalyser.fftSize = 512;
+  tabSource.connect(activityAnalyser);
+  if (micGainNode) micGainNode.connect(activityAnalyser);
+  startActivityMonitor();
 
   toTab({ type: "SW_LOG", message: "混音完成，連線後端 " + settings.backendUrl });
 
@@ -101,15 +153,56 @@ async function startCapture(streamId) {
   starting = false;
 }
 
+function startMicGate() {
+  const buf = new Float32Array(micAnalyser.fftSize);
+  const tick = () => {
+    if (!micAnalyser || !micGainNode) return; // 已停止
+    micAnalyser.getFloatTimeDomainData(buf);
+    let sumSquares = 0;
+    for (let i = 0; i < buf.length; i += 1) sumSquares += buf[i] * buf[i];
+    const rms = Math.sqrt(sumSquares / buf.length);
+    const targetGain = rms >= MIC_RMS_THRESHOLD ? 1 : 0;
+    // setTargetAtTime 做平滑過渡，避免開/關瞬間喀一聲
+    micGainNode.gain.setTargetAtTime(targetGain, audioCtx.currentTime, 0.05);
+    micGateTimer = setTimeout(tick, MIC_GATE_INTERVAL_MS);
+  };
+  tick();
+}
+
+function startActivityMonitor() {
+  activityBuf = new Float32Array(activityAnalyser.fftSize);
+  const tick = () => {
+    if (!activityAnalyser) return; // 已停止
+    activityAnalyser.getFloatTimeDomainData(activityBuf);
+    let sumSquares = 0;
+    for (let i = 0; i < activityBuf.length; i += 1) sumSquares += activityBuf[i] * activityBuf[i];
+    const rms = Math.sqrt(sumSquares / activityBuf.length);
+    totalSamples += 1;
+    if (rms >= ACTIVITY_RMS_THRESHOLD) activeSamples += 1;
+    activityTimer = setTimeout(tick, ACTIVITY_CHECK_INTERVAL_MS);
+  };
+  tick();
+}
+
 function startRecorderCycle() {
   if (!stream) return;
+  activeSamples = 0;
+  totalSamples = 0;
   recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
   const parts = [];
   recorder.ondataavailable = (e) => e.data.size && parts.push(e.data);
   recorder.onstop = async () => {
+    const activeRatio = totalSamples ? activeSamples / totalSamples : 0;
     if (parts.length && ws && ws.readyState === WebSocket.OPEN) {
-      const blob = new Blob(parts, { type: "audio/webm" });
-      ws.send(await blob.arrayBuffer());
+      if (activeRatio >= MIN_ACTIVE_RATIO) {
+        const blob = new Blob(parts, { type: "audio/webm" });
+        ws.send(await blob.arrayBuffer());
+      } else {
+        toTab({
+          type: "SW_LOG",
+          message: "本段幾乎全靜音（有聲音比例 " + (activeRatio * 100).toFixed(1) + "%），跳過不送出轉錄",
+        });
+      }
     }
     if (running) startRecorderCycle();
   };
@@ -184,6 +277,8 @@ function stopAll() {
   starting = false;
   resumeSessionId = null; // 使用者主動停止：下次「開始」是全新 session，不接回舊的
   clearTimeout(chunkTimer);
+  stopMicGate();
+  stopActivityMonitor();
   try {
     recorder && recorder.state !== "inactive" && recorder.stop();
   } catch {}

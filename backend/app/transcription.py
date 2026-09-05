@@ -20,32 +20,16 @@ _EXT_BY_MIME = {
     "audio/mpeg": ".mp3",
 }
 
-# 模型在靜音／雜訊段常見的回應，直接丟棄
-_NOISE = {"", "（無語音）", "(無語音)", "[靜音]", "無法辨識", "no speech", "(silence)"}
 
-# Whisper 對靜音／雜訊段常見的另一種幻覺：腦補出 YouTube 影片開頭結尾的制式用語
-# （謝謝觀看、訂閱、點讚、字幕組…）。每次幻覺出的措辭都不一樣，精確比對擋不住，
-# 改用關鍵字命中數判斷——命中 2 個以上才視為幻覺，避免誤刪真的提到「訂閱」之類的正常發言。
-_HALLUCINATION_MARKERS = (
-    "謝謝觀看", "谢谢观看", "感謝觀看", "感谢观看",
-    "歡迎訂閱", "欢迎订阅", "請訂閱", "请订阅", "訂閱", "订阅",
-    "點讚", "点赞", "不吝點讚", "不吝点赞",
-    "轉發", "转发", "打賞", "打赏",
-    "字幕由", "字幕組", "字幕组",
-    "明鏡與點點", "明镜与点点",
-)
+async def transcribe(audio_bytes: bytes, *, mime: str = "audio/webm", context: str = "", **_: object) -> str:
+    """呼叫 OpenRouter 的 Whisper 端點轉錄一段音訊；失敗重試一次。
 
-
-def _looks_like_noise(text: str) -> bool:
-    stripped = text.strip().strip("。.!！?？ ")
-    if stripped.lower() in _NOISE or len(stripped) == 0:
-        return True
-    hits = sum(1 for marker in _HALLUCINATION_MARKERS if marker in stripped)
-    return hits >= 2
-
-
-async def transcribe(audio_bytes: bytes, *, mime: str = "audio/webm", **_: object) -> str:
-    """呼叫 OpenRouter 的 Whisper 端點轉錄一段音訊；失敗重試一次；雜訊結果回傳空字串。"""
+    不在這裡過濾雜訊/幻覺——Whisper 回什麼就回傳什麼，交給 Gemini 分析時
+    自己判斷、忽略雜訊或幻覺片段（見 prompts.py）。改在生成階段就降低腦補
+    機率：temperature=0（降低隨機性），並把最近幾句逐字稿當 prompt 接續上去
+    （讓 Whisper 知道當下在講什麼主題，不容易脫離內容亂編）。刻意不強制指定
+    單一語言——會議常中英夾雜，鎖死語言反而讓另一種語言轉錄品質變差。
+    """
     if not audio_bytes:
         return ""
 
@@ -56,7 +40,10 @@ async def transcribe(audio_bytes: bytes, *, mime: str = "audio/webm", **_: objec
 
     ext = _EXT_BY_MIME.get(mime, ".webm")
     files = {"file": (f"audio{ext}", audio_bytes, mime)}
-    data = {"model": s.openrouter_model, "response_format": "json"}
+    data = {"model": s.openrouter_model, "response_format": "json", "temperature": "0"}
+    prompt = " ".join(context.split())[-800:]
+    if prompt:
+        data["prompt"] = prompt
     headers = {"Authorization": f"Bearer {s.openrouter_api_key}"}
 
     last_err: Exception | None = None
@@ -76,10 +63,6 @@ async def transcribe(audio_bytes: bytes, *, mime: str = "audio/webm", **_: objec
                 last_err = e
                 logger.warning("OpenRouter 回應解析失敗 (attempt %d): %s | body=%s", attempt + 1, e, resp.text[:200])
                 continue
-
-            if _looks_like_noise(text):
-                logger.info("轉錄結果視為雜訊/靜音，已丟棄：%r", text)
-                return ""
 
             logger.info("轉錄成功（%d 字）：%s", len(text), text[:80])
             return text

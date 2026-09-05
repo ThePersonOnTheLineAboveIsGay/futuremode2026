@@ -1,6 +1,6 @@
 // 在 Google Meet 頁面顯示狀態、分析結果與除錯記錄。開始/停止在工具列圖示。
 (() => {
-  const VERSION = "0.11.1";
+  const VERSION = "0.11.5";
   const host = document.createElement("div");
   host.id = "mfa-root";
   document.documentElement.appendChild(host);

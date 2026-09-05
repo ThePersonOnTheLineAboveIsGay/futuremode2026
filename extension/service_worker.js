@@ -107,15 +107,34 @@ async function stop() {
 }
 
 // 點工具列圖示：切換（一定帶 activeTab，這是唯一能可靠擷取分頁音訊的觸發點）
+//
+// running 這個 flag 存在 storage.session，跟「offscreen 文件是否真的存在」是兩件事：
+// 如果上一輪啟動中途出錯、或 offscreen 文件被 Chrome 意外關掉卻沒能回寫狀態，
+// running 就可能卡在 true，但實際上什麼都沒在跑。這種髒狀態下點「開始」，
+// 這裡會誤判成「要停止」而完全沒反應（使用者感覺像是「按了開始卻沒開始」）。
+// 所以每次點擊都額外核對 offscreen 文件是否真的存在，兩者對不上就當作已停止。
 chrome.action.onClicked.addListener(async (tab) => {
   const { running } = await getState();
-  if (running) stop();
+  const actuallyRunning = running && (await hasOffscreen());
+  if (running && !actuallyRunning) {
+    log(tab?.id, "偵測到殘留狀態（running=true 但 offscreen 已不存在），先清除再重新啟動");
+    await setState({ running: false, tabId: null, sessionId: null });
+    setBadge(false);
+  }
+  if (actuallyRunning) stop();
   else startForTab(tab);
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "GET_STATE") {
-    getState().then((s) => sendResponse({ running: s.running, sessionId: s.sessionId }));
+    // running 是全域狀態（同一時間只會擷取一個分頁），但這裡是哪個分頁在問
+    // 也很重要：如果同時開著不只一個 Meet／YouTube 分頁，只有真正被擷取的
+    // 那個分頁才算「監聽中」，其他分頁即使 running=true 也該顯示未開始，
+    // 否則沒在被監聽的分頁面板也會誤顯示「監聽中」。
+    getState().then((s) => {
+      const runningHere = s.running && sender.tab && s.tabId === sender.tab.id;
+      sendResponse({ running: runningHere, sessionId: runningHere ? s.sessionId : null });
+    });
     return true;
   }
 

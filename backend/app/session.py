@@ -72,6 +72,10 @@ class Session:
         self._last_analyzed_index = len(self.transcript)
         self._last_analysis_time = time.time()
 
+    def recent_transcript_text(self, n: int = 4) -> str:
+        """最近 n 句逐字稿，接續傳給 Whisper 當 prompt，降低脫離主題的幻覺。"""
+        return " ".join(u.text for u in self.transcript[-n:] if u.text)
+
     # ---------- 去重 ----------
 
     def is_new_report(self, topic: str, verdict: str) -> bool:

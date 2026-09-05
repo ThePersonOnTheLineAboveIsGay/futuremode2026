@@ -55,7 +55,7 @@ async def _worker(ws: WebSocket, session: Session, queue: "asyncio.Queue[tuple]"
         kind, payload = await queue.get()
         try:
             if kind == "audio":
-                text = await transcribe(payload)
+                text = await transcribe(payload, context=session.recent_transcript_text())
                 if not text:
                     await _send(ws, NoticeMessage(text="本段音訊未偵測到可轉錄的語音（雜訊/靜音或轉錄失敗）"))
                     continue
