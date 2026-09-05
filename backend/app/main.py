@@ -79,19 +79,31 @@ async def safe_send_json(websocket: WebSocket, payload: dict) -> None:
         logger.debug("[%s] Dropped send to a closed connection", payload.get("meeting_id"))
 
 
+async def safe_close(websocket: WebSocket, code: int) -> None:
+    """Best-effort close. The client may have already disconnected (e.g. the
+    join handshake never arrived because they hung up first), in which case
+    the ASGI connection is already gone and closing it again raises — that's
+    expected, not an error, so it's swallowed here instead of crashing the
+    handler."""
+    try:
+        await websocket.close(code=code)
+    except Exception:
+        logger.debug("Dropped close on an already-closed connection")
+
+
 @app.websocket("/ws/meeting")
 async def meeting_socket(websocket: WebSocket) -> None:
     meeting_id = websocket.query_params.get("meeting_id", "").strip().lower()
     await websocket.accept()
     if not MEETING_ID_PATTERN.fullmatch(meeting_id):
         await safe_send_json(websocket, {"type": "error", "message": "meeting_id 格式不正確"})
-        await websocket.close(code=1008)
+        await safe_close(websocket, code=1008)
         return
 
     rooms: RoomManager = websocket.app.state.rooms
     join_payload = await receive_join_payload(websocket, meeting_id)
     if join_payload is None:
-        await websocket.close(code=1008)
+        await safe_close(websocket, code=1008)
         return
 
     mime_type = str(join_payload.get("mime_type", "audio/webm"))
@@ -102,7 +114,7 @@ async def meeting_socket(websocket: WebSocket) -> None:
     if ai_services is None:
         missing = "、".join(settings.missing_api_keys)
         await safe_send_json(websocket, {"type": "error", "message": f"後端尚未設定：{missing}"})
-        await websocket.close(code=1011)
+        await safe_close(websocket, code=1011)
         await rooms.disconnect(meeting_id, websocket)
         return
 
